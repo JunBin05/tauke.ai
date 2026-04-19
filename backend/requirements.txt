@@ -1,0 +1,7 @@
+# yall can use "pip install -r requirements.txt" to install them
+fastapi
+uvicorn
+supabase
+python-dotenv
+requests
+python-multipart
