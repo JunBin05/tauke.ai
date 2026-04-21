@@ -3,8 +3,9 @@ import io
 import json
 import os
 import re
+import requests
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import fitz
 import pandas as pd
@@ -50,11 +51,23 @@ class ProcessMonthlyUploadRequest(BaseModel):
     sales_csv_data_url: str = Field(min_length=1)
 
 
+class BoardroomStartRequest(BaseModel):
+    merchant_id: str = Field(min_length=1)
+    target_month: str = Field(min_length=7)
+
+
+class BoardroomContinueRequest(BaseModel):
+    merchant_id: str = Field(min_length=1)
+    target_month: str = Field(min_length=7)
+    boss_answers: str = Field(min_length=1)
+
+
 app = FastAPI(title="Vision Financial Upload Service", version="2.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"], # Specifically allow your React frontend
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1):\d+",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -567,6 +580,451 @@ def _replace_supplier_invoices(supabase: Client, summary_id: str, rows: List[Dic
     return len(payload)
 
 
+def _call_text_llm(client: Any, system_prompt: str, user_prompt: str, temperature: float = 0.2) -> str:
+    mode = client.get("mode")
+    sdk_client = client.get("client")
+
+    if mode == "modern":
+        response = sdk_client.chat.completions.create(
+            model="glm-4.7-flash",
+            temperature=temperature,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+        )
+
+        if not getattr(response, "choices", None):
+            raise HTTPException(status_code=502, detail="Text model returned no choices")
+
+        return _extract_model_text(response.choices[0].message.content)
+
+    if mode == "legacy":
+        response = sdk_client.model_api.invoke(
+            model="glm-4.7-flash",
+            temperature=temperature,
+            prompt=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+        )
+
+        data = response.get("data") if isinstance(response, dict) else None
+        choices = data.get("choices") if isinstance(data, dict) else None
+        if not isinstance(choices, list) or not choices:
+            raise HTTPException(status_code=502, detail=f"Legacy text response invalid: {response}")
+
+        first_choice = choices[0] if isinstance(choices[0], dict) else {}
+        return _extract_model_text(first_choice.get("content", ""))
+
+    raise HTTPException(status_code=500, detail="Unsupported zhipu client mode")
+
+
+def _get_previous_month(month_str: str) -> str:
+    dt = datetime.strptime(f"{month_str}-01", "%Y-%m-%d")
+    if dt.month == 1:
+        return f"{dt.year - 1}-12"
+    return f"{dt.year:04d}-{dt.month - 1:02d}"
+
+
+def _fetch_diagnostic_patterns(supabase: Client, merchant_id: str, target_month: str) -> Dict[str, Any]:
+    res = (
+        supabase.table("monthly_summaries")
+        .select("diagnostic_patterns")
+        .eq("merchant_id", merchant_id)
+        .eq("report_month", target_month)
+        .limit(1)
+        .execute()
+    )
+
+    if not res.data:
+        raise HTTPException(status_code=404, detail="No monthly summary found for merchant and target_month")
+
+    diagnostic = res.data[0].get("diagnostic_patterns")
+    if not isinstance(diagnostic, dict):
+        raise HTTPException(status_code=422, detail="diagnostic_patterns is missing. Run diagnostics first.")
+
+    return diagnostic
+
+
+def _fetch_financial_comparison(supabase: Client, merchant_id: str, target_month: str) -> Dict[str, Any]:
+    baseline_month = _get_previous_month(target_month)
+
+    baseline_res = (
+        supabase.table("monthly_summaries")
+        .select("report_month,total_revenue,total_fixed_costs,net_profit")
+        .eq("merchant_id", merchant_id)
+        .eq("report_month", baseline_month)
+        .limit(1)
+        .execute()
+    )
+    target_res = (
+        supabase.table("monthly_summaries")
+        .select("report_month,total_revenue,total_fixed_costs,net_profit")
+        .eq("merchant_id", merchant_id)
+        .eq("report_month", target_month)
+        .limit(1)
+        .execute()
+    )
+
+    if not baseline_res.data:
+        raise HTTPException(status_code=404, detail=f"No baseline month data found for {baseline_month}")
+    if not target_res.data:
+        raise HTTPException(status_code=404, detail=f"No target month data found for {target_month}")
+
+    baseline = baseline_res.data[0]
+    target = target_res.data[0]
+    return {
+        "baseline_month": baseline_month,
+        "target_month": target_month,
+        "baseline": {
+            "report_month": baseline.get("report_month", baseline_month),
+            "total_revenue": _to_float(baseline.get("total_revenue"), 0.0),
+            "total_fixed_costs": _to_float(baseline.get("total_fixed_costs"), 0.0),
+            "net_profit": _to_float(baseline.get("net_profit"), 0.0),
+        },
+        "target": {
+            "report_month": target.get("report_month", target_month),
+            "total_revenue": _to_float(target.get("total_revenue"), 0.0),
+            "total_fixed_costs": _to_float(target.get("total_fixed_costs"), 0.0),
+            "net_profit": _to_float(target.get("net_profit"), 0.0),
+        },
+    }
+
+
+def _fetch_merchant_profile(supabase: Client, merchant_id: str) -> str:
+    res = (
+        supabase.table("merchants")
+        .select("merchant_profile")
+        .eq("id", merchant_id)
+        .limit(1)
+        .execute()
+    )
+
+    if not res.data:
+        return ""
+    return str(res.data[0].get("merchant_profile") or "").strip()
+
+
+def _extract_location_hint(merchant_profile: str) -> str:
+    if merchant_profile.strip():
+        return merchant_profile
+    return "Malaysia"
+
+
+def _target_month_date_range(target_month: str) -> Tuple[str, str]:
+    month_start = datetime.strptime(f"{target_month}-01", "%Y-%m-%d")
+    if month_start.month == 12:
+        next_month = month_start.replace(year=month_start.year + 1, month=1)
+    else:
+        next_month = month_start.replace(month=month_start.month + 1)
+    month_end = (next_month - pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+    return month_start.strftime("%Y-%m-%d"), month_end
+
+
+def _fetch_news_signal(target_month: str) -> Dict[str, Any]:
+    gnews_api_key = os.getenv("GNEWS_API_KEY")
+    if not gnews_api_key:
+        return {"attempted": True, "status": "error", "error": "Missing GNEWS_API_KEY", "data": []}
+
+    start_date, end_date = _target_month_date_range(target_month)
+    query = f"Malaysia food OR cafe OR restaurant {target_month}"
+    try:
+        url = "https://gnews.io/api/v4/search"
+        params = {
+            "query": query,
+            "from": start_date,
+            "to": end_date,
+            "lang": "en",
+            "country": "my",
+            "max": 5,
+            "sortby": "publishedAt",
+            "apikey": gnews_api_key,
+        }
+        resp = requests.get(url, params=params, timeout=20)
+        resp.raise_for_status()
+        data = resp.json()
+        rows = data.get("articles", []) if isinstance(data, dict) else []
+        compact = [
+            {
+                "title": row.get("title", ""),
+                "source": (row.get("source") or {}).get("name", "") if isinstance(row.get("source"), dict) else "",
+                "published_at": row.get("publishedAt", ""),
+                "url": row.get("url", ""),
+            }
+            for row in rows[:5]
+            if isinstance(row, dict)
+        ]
+        return {"attempted": True, "status": "ok", "provider": "gnews", "data": compact}
+    except Exception as exc:
+        return {"attempted": True, "status": "error", "error": str(exc), "data": []}
+
+
+def _fetch_web_signal(target_month: str) -> Dict[str, Any]:
+    serper_api_key = os.getenv("SERPER_API_KEY")
+    if not serper_api_key:
+        return {"attempted": True, "status": "error", "error": "Missing SERPER_API_KEY", "data": []}
+
+    query = f"Malaysia cafe promotion OR restaurant promo OR local event {target_month}"
+    try:
+        url = "https://google.serper.dev/search"
+        headers = {"X-API-KEY": serper_api_key, "Content-Type": "application/json"}
+        payload = {"q": query, "gl": "my", "hl": "en", "num": 5}
+        resp = requests.post(url, headers=headers, json=payload, timeout=20)
+        resp.raise_for_status()
+        body = resp.json()
+        rows = body.get("organic", []) if isinstance(body, dict) else []
+        compact = [
+            {
+                "title": row.get("title", ""),
+                "source": row.get("source", ""),
+                "date": row.get("date", ""),
+                "url": row.get("link", ""),
+            }
+            for row in rows[:5]
+            if isinstance(row, dict)
+        ]
+        return {"attempted": True, "status": "ok", "provider": "serper", "data": compact}
+    except Exception as exc:
+        return {"attempted": True, "status": "error", "error": str(exc), "data": []}
+
+
+def _fetch_places_signal(merchant_profile: str) -> Dict[str, Any]:
+    places_api_key = os.getenv("GOOGLE_PLACES_API_KEY")
+    if not places_api_key:
+        return {
+            "attempted": True,
+            "status": "error",
+            "error": "Missing GOOGLE_PLACES_API_KEY",
+            "data": {},
+        }
+
+    query = f"cafe OR restaurant near {_extract_location_hint(merchant_profile)}"
+    try:
+        url = "https://maps.googleapis.com/maps/api/place/textsearch/json"
+        params = {"query": query, "key": places_api_key}
+        resp = requests.get(url, params=params, timeout=25)
+        resp.raise_for_status()
+        body = resp.json()
+        rows = body.get("results", []) if isinstance(body, dict) else []
+        top_places = [
+            {
+                "name": row.get("name", ""),
+                "rating": row.get("rating"),
+                "user_ratings_total": row.get("user_ratings_total"),
+                "business_status": row.get("business_status", ""),
+                "formatted_address": row.get("formatted_address", ""),
+            }
+            for row in rows[:5]
+            if isinstance(row, dict)
+        ]
+        return {
+            "attempted": True,
+            "status": "ok",
+            "provider": "google_places",
+            "data": {"query": query, "nearby_food_venue_count": len(rows), "top_places": top_places},
+        }
+    except Exception as exc:
+        return {"attempted": True, "status": "error", "error": str(exc), "data": {}}
+
+
+def _fetch_weather_signal(merchant_profile: str, target_month: str) -> Dict[str, Any]:
+    weather_api_key = os.getenv("OPENWEATHER_API_KEY")
+    if not weather_api_key:
+        return {"attempted": True, "status": "error", "error": "Missing OPENWEATHER_API_KEY", "data": {}}
+
+    try:
+        geo_url = "https://api.openweathermap.org/geo/1.0/direct"
+        geo_params = {"q": _extract_location_hint(merchant_profile), "limit": 1, "appid": weather_api_key}
+        geo_resp = requests.get(geo_url, params=geo_params, timeout=20)
+        geo_resp.raise_for_status()
+        geo_data = geo_resp.json()
+        if not geo_data:
+            return {
+                "attempted": True,
+                "status": "error",
+                "error": "Unable to geocode location from merchant profile.",
+                "data": {},
+            }
+
+        top = geo_data[0]
+        weather_url = "https://api.openweathermap.org/data/2.5/weather"
+        params = {
+            "lat": float(top.get("lat")),
+            "lon": float(top.get("lon")),
+            "appid": weather_api_key,
+            "units": "metric",
+        }
+        resp = requests.get(weather_url, params=params, timeout=25)
+        resp.raise_for_status()
+        body = resp.json()
+        weather = body.get("weather", []) if isinstance(body, dict) else []
+        main_obj = body.get("main", {}) if isinstance(body, dict) else {}
+        rain_obj = body.get("rain", {}) if isinstance(body, dict) else {}
+        summary = {
+            "target_month": target_month,
+            "location": f"{top.get('name', '')}, {top.get('country', '')}",
+            "current_temp_c": _to_float(main_obj.get("temp"), 0.0),
+            "humidity_pct": _to_float(main_obj.get("humidity"), 0.0),
+            "condition": weather[0].get("main", "") if weather and isinstance(weather[0], dict) else "",
+            "rain_1h_mm": _to_float(rain_obj.get("1h"), 0.0),
+        }
+        return {"attempted": True, "status": "ok", "provider": "openweather", "data": summary}
+    except Exception as exc:
+        return {"attempted": True, "status": "error", "error": str(exc), "data": {}}
+
+
+def _fetch_external_signals(merchant_profile: str, target_month: str) -> Dict[str, Any]:
+    news = _fetch_news_signal(target_month)
+    web = _fetch_web_signal(target_month)
+    places = _fetch_places_signal(merchant_profile)
+    weather = _fetch_weather_signal(merchant_profile, target_month)
+    return {
+        "news": news,
+        "web": web,
+        "places": places,
+        "weather": weather,
+        "required_tools_attempted": bool(
+            news.get("attempted") and web.get("attempted") and places.get("attempted") and weather.get("attempted")
+        ),
+    }
+
+
+def _analyst_interrogation_prompt(financial_comparison: Dict[str, Any], diagnostic_json: Dict[str, Any]) -> Tuple[str, str]:
+    system_prompt = (
+        "You are an F&B Analyst. Overall Revenue shifted from [Baseline Revenue] to [Target Revenue]. "
+        "Here is the underlying 12-point diagnostic JSON explaining the shifts. Look at this data. "
+        "Do not generate a theory yet. Your job is to interrogate the Boss to get real-world context. "
+        "Generate up to 5 critical, direct questions (preferably Yes/No or short answer) for the Boss. "
+        "Rule 1: You MUST always ask if any specific marketing campaigns, promotions, or discounts were run during the target month. "
+        "Rule 2: Base the remaining questions on the largest anomalies in the JSON (e.g., sudden drops in a specific item, or massive shifts in time-of-day traffic). "
+        "Rule 3: Keep the questions concise. Do not overwhelm the Boss."
+    )
+    user_prompt = (
+        "High-level financial comparison (baseline vs target):\n"
+        f"{json.dumps(financial_comparison, indent=2)}\n\n"
+        "Diagnostic JSON:\n"
+        f"{json.dumps(diagnostic_json, indent=2)}\n\n"
+        "Return plain text with numbered questions only."
+    )
+    return system_prompt, user_prompt
+
+
+def _analyst_synthesis_prompt(
+    merchant_profile: str,
+    target_month: str,
+    diagnostic_json: Dict[str, Any],
+    financial_comparison: Dict[str, Any],
+    boss_answers: str,
+    external_signals: Dict[str, Any],
+) -> Tuple[str, str]:
+    system_prompt = (
+        "You are an expert F&B Analyst. Evidence-first reasoning is mandatory. "
+        "You MUST use external findings as support, not replacement truth. "
+        "Use all required tools and state uncertainty where tools are weak."
+    )
+    user_prompt = (
+        f"Target month: {target_month}\n"
+        f"Merchant profile: {merchant_profile}\n\n"
+        "Financial comparison:\n"
+        f"{json.dumps(financial_comparison, indent=2)}\n\n"
+        "12-point diagnostic JSON:\n"
+        f"{json.dumps(diagnostic_json, indent=2)}\n\n"
+        "Boss answers:\n"
+        f"{boss_answers}\n\n"
+        "External signals:\n"
+        f"{json.dumps(external_signals, indent=2)}\n\n"
+        "Write Theory V1 with sections:\n"
+        "1) Theory V1 Summary\n"
+        "2) Internal Data Evidence\n"
+        "3) Boss Context Evidence\n"
+        "4) External Evidence\n"
+        "5) Magnitude Check\n"
+        "6) Strategic Recommendation (So What)\n"
+        "7) Confidence and Unknowns"
+    )
+    return system_prompt, user_prompt
+
+
+def _supervisor_review_prompt(
+    diagnostic_json: Dict[str, Any],
+    boss_answers: str,
+    theory_v1: str,
+    external_signals: Dict[str, Any],
+) -> Tuple[str, str]:
+    system_prompt = (
+        "You are the ruthless CFO Supervisor. Review the Analyst's Theory V1 against the original "
+        "JSON data and the Boss's answers. You are the gatekeeper. "
+        "Reject if tools/data are missing, if major claims are ungrounded, if boss answers are ignored, "
+        "if magnitude logic fails, or if no actionable recommendation exists. "
+        "Approve only when all checks pass."
+    )
+    user_prompt = (
+        "Original diagnostic JSON:\n"
+        f"{json.dumps(diagnostic_json, indent=2)}\n\n"
+        "Boss answers:\n"
+        f"{boss_answers}\n\n"
+        "External tool outputs:\n"
+        f"{json.dumps(external_signals, indent=2)}\n\n"
+        "Analyst Theory V1:\n"
+        f"{theory_v1}\n\n"
+        "Return in this format:\n"
+        "Decision: APPROVED or REJECTED\n"
+        "Gate Checks:\n"
+        "- Tool/Data Coverage: PASS/FAIL\n"
+        "- Internal Grounding: PASS/FAIL\n"
+        "- Boss Alignment: PASS/FAIL\n"
+        "- Magnitude Test: PASS/FAIL\n"
+        "- So-What Rule: PASS/FAIL\n"
+        "Supervisor Verdict: (short, sharp evaluation)"
+    )
+    return system_prompt, user_prompt
+
+
+def _extract_supervisor_decision(supervisor_evaluation: str) -> str:
+    text = (supervisor_evaluation or "").upper()
+    match = re.search(r"DECISION\s*:\s*(APPROVED|REJECTED)", text)
+    if match:
+        return match.group(1)
+    if "APPROVED" in text and "REJECTED" not in text:
+        return "APPROVED"
+    if "REJECTED" in text:
+        return "REJECTED"
+    return "UNKNOWN"
+
+
+def _strategist_action_plan_prompt(
+    merchant_profile: str,
+    diagnostic_json: Dict[str, Any],
+    boss_answers: str,
+    final_approved_theory: str,
+) -> Tuple[str, str]:
+    system_prompt = (
+        "You are an elite F&B Business Strategist. You have just read the Final Theory regarding why this business's revenue shifted. "
+        "You also have their 12-point internal data patterns and their merchant profile. "
+        "Your task is to generate the 'Top 3 Strategic Action Plans' for the Boss to execute immediately.\n\n"
+        "Strict Rules:\n\n"
+        "No Generic Advice: Do NOT say 'Run a social media campaign' or 'Offer a discount.'\n\n"
+        "Hyper-Specific: You must name specific items from their data (e.g., 'Kopi C Ais', 'Nasi Lemak Ayam'), specify exact times of day "
+        "(e.g., 'Target the 2 PM - 6 PM Afternoon slump'), and suggest specific price points or bundle strategies based on their "
+        "Average Order Value (AOV) and Units Per Transaction (UPT).\n\n"
+        "Leverage Strengths: If a specific item or time block grew (e.g., 'Evening sales grew 5%'), at least one suggestion must focus "
+        "on accelerating that growth, not just fixing the drops.\n\n"
+        "Format: Output the response as 3 distinct, bolded Action Items, each followed by a short paragraph explaining the exact 'Why' "
+        "and 'How' based strictly on the data."
+    )
+    user_prompt = (
+        f"Merchant profile:\n{merchant_profile}\n\n"
+        "12-point diagnostic JSON:\n"
+        f"{json.dumps(diagnostic_json, indent=2)}\n\n"
+        "Boss answers:\n"
+        f"{boss_answers}\n\n"
+        "Final approved theory:\n"
+        f"{final_approved_theory}\n"
+    )
+    return system_prompt, user_prompt
+
+
 @app.get("/health")
 def healthcheck() -> Dict[str, str]:
     return {"status": "ok"}
@@ -694,6 +1152,97 @@ def process_monthly_upload(payload: ProcessMonthlyUploadRequest) -> Dict[str, An
         "operating_expenses_rows": inserted_expenses,
         "supplier_invoices_rows": inserted_invoices,
     }
+
+
+@app.post("/boardroom/start")
+def boardroom_start(payload: BoardroomStartRequest) -> Dict[str, Any]:
+    try:
+        merchant_id = payload.merchant_id.strip()
+        target_month = _normalize_report_month(payload.target_month)
+
+        supabase = get_supabase_client()
+        llm_client = get_zhipu_client()
+
+        financial_comparison = _fetch_financial_comparison(supabase, merchant_id, target_month)
+        diagnostic_json = _fetch_diagnostic_patterns(supabase, merchant_id, target_month)
+
+        sys_prompt, usr_prompt = _analyst_interrogation_prompt(financial_comparison, diagnostic_json)
+        analyst_questions = _call_text_llm(llm_client, sys_prompt, usr_prompt, temperature=0.1)
+
+        return {
+            "merchant_id": merchant_id,
+            "target_month": target_month,
+            "financial_comparison": financial_comparison,
+            "diagnostic_patterns": diagnostic_json,
+            "analyst_questions": analyst_questions,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Boardroom start failed: {exc}") from exc
+
+
+@app.post("/boardroom/continue")
+def boardroom_continue(payload: BoardroomContinueRequest) -> Dict[str, Any]:
+    try:
+        merchant_id = payload.merchant_id.strip()
+        target_month = _normalize_report_month(payload.target_month)
+        boss_answers = payload.boss_answers.strip()
+
+        supabase = get_supabase_client()
+        llm_client = get_zhipu_client()
+
+        financial_comparison = _fetch_financial_comparison(supabase, merchant_id, target_month)
+        diagnostic_json = _fetch_diagnostic_patterns(supabase, merchant_id, target_month)
+        merchant_profile = _fetch_merchant_profile(supabase, merchant_id)
+        external_signals = _fetch_external_signals(merchant_profile, target_month)
+
+        analyst_sys, analyst_usr = _analyst_synthesis_prompt(
+            merchant_profile=merchant_profile,
+            target_month=target_month,
+            diagnostic_json=diagnostic_json,
+            financial_comparison=financial_comparison,
+            boss_answers=boss_answers,
+            external_signals=external_signals,
+        )
+        theory_v1 = _call_text_llm(llm_client, analyst_sys, analyst_usr, temperature=0.2)
+
+        sup_sys, sup_usr = _supervisor_review_prompt(
+            diagnostic_json=diagnostic_json,
+            boss_answers=boss_answers,
+            theory_v1=theory_v1,
+            external_signals=external_signals,
+        )
+        supervisor_evaluation = _call_text_llm(llm_client, sup_sys, sup_usr, temperature=0.1)
+
+        supervisor_decision = _extract_supervisor_decision(supervisor_evaluation)
+        final_approved_theory = theory_v1 if supervisor_decision == "APPROVED" else ""
+
+        strategist_action_plan = ""
+        if supervisor_decision == "APPROVED":
+            strategist_sys, strategist_usr = _strategist_action_plan_prompt(
+                merchant_profile=merchant_profile,
+                diagnostic_json=diagnostic_json,
+                boss_answers=boss_answers,
+                final_approved_theory=final_approved_theory,
+            )
+            strategist_action_plan = _call_text_llm(llm_client, strategist_sys, strategist_usr, temperature=0.2)
+
+        return {
+            "merchant_id": merchant_id,
+            "target_month": target_month,
+            "merchant_profile": merchant_profile,
+            "external_signals": external_signals,
+            "theory_v1": theory_v1,
+            "supervisor_evaluation": supervisor_evaluation,
+            "supervisor_decision": supervisor_decision,
+            "final_approved_theory": final_approved_theory,
+            "strategist_action_plan": strategist_action_plan,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Boardroom continue failed: {exc}") from exc
 
 
 if __name__ == "__main__":
