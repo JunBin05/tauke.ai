@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from supabase import create_client, Client
 from fastapi import BackgroundTasks
+from pydantic import BaseModel
 
 load_dotenv()
 app = FastAPI()
@@ -26,6 +27,21 @@ app.add_middleware(
 url: str = os.environ.get("SUPABASE_URL")
 key: str = os.environ.get("SUPABASE_KEY")
 supabase: Client = create_client(url, key)
+
+class SignupRequest(BaseModel):
+    email: str
+    password: str
+    name: str          
+    shop_type: str     
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+    
+class GoogleSyncRequest(BaseModel):
+    access_token: str  # The token the frontend receives from Google login
+    name: str          
+    shop_type: str     
 
 def check_and_notify_costs(merchant_id: str):
     now = datetime.now()
@@ -61,12 +77,100 @@ def check_and_notify_costs(merchant_id: str):
 def read_root():
     return {"message": "MicroEdge Backend 运行中!"}
 
+@app.post("/auth/signup")
+async def signup(req: SignupRequest):
+    try:
+        # 1. Create a secure account in Supabase Auth
+        auth_response = supabase.auth.sign_up({
+            "email": req.email,
+            "password": req.password
+        })
+        
+        # If user creation is successful, link it to a new merchant profile
+        if auth_response.user:
+            user_id = auth_response.user.id
+            
+            # 2. Insert business details into the 'merchants' table
+            merchant_data = {
+                "owner_id": user_id,  # Link the Supabase Auth ID
+                "name": req.name,
+                "type": req.shop_type
+            }
+            supabase.table("merchants").insert(merchant_data).execute()
+            
+            return {
+                "status": "success", 
+                "message": "Sign up complete! Shop created.", 
+                "owner_id": user_id
+            }
+    except Exception as e:
+        return {"status": "error", "message": f"Signup failed: {e}"}
+
+
+# --- 2. Login Endpoint ---
+@app.post("/auth/login")
+async def login(req: LoginRequest):
+    try:
+        # Supabase automatically verifies the password
+        response = supabase.auth.sign_in_with_password({
+            "email": req.email, 
+            "password": req.password
+        })
+        
+        return {
+            "status": "success",
+            "message": "Login successful!",
+            "access_token": response.session.access_token, # Token to keep frontend logged in
+            "owner_id": response.user.id                   # The unified ID for your database
+        }
+    except Exception as e:
+        return {"status": "error", "message": f"Login failed: {e}"}
+
 # feature: save the AI analysis cost 
 @app.post("/add-ingredient")
 async def add_ingredient(name: str, price: float, m_id: str):
     data = {"merchant_id": m_id, "item_name": name, "price_per_unit": price}
     response = supabase.table("ingredient_costs").insert(data).execute()
     return {"status": "success", "data": response.data}
+
+# --- 3. Google Profile Sync Endpoint ---
+@app.post("/auth/sync-google-profile")
+async def sync_google_profile(req: GoogleSyncRequest):
+    try:
+        # 1. Verify the access token from the frontend to ensure it's legit
+        user_response = supabase.auth.get_user(req.access_token)
+        if not user_response.user:
+            return {"status": "error", "message": "Invalid access token"}
+
+        user_id = user_response.user.id
+        
+        # 2. Check if this Google user already has a shop in the merchants table
+        existing_shop = supabase.table("merchants").select("*").eq("owner_id", user_id).execute()
+        
+        # If the shop exists, just welcome them back
+        if existing_shop.data:
+            return {
+                "status": "success", 
+                "message": "Welcome back, Google user!", 
+                "owner_id": user_id
+            }
+
+        # 3. If it's a brand new Google user, create a new shop profile for them
+        merchant_data = {
+            "owner_id": user_id,
+            "name": req.name,
+            "type": req.shop_type
+        }
+        supabase.table("merchants").insert(merchant_data).execute()
+        
+        return {
+            "status": "success", 
+            "message": "Google profile linked! Shop created.", 
+            "owner_id": user_id
+        }
+        
+    except Exception as e:
+        return {"status": "error", "message": f"Google sync failed: {e}"}
 
 @app.post("/add-menu-item")
 async def add_menu_item(merchant_id: str, item_name: str, original_price: float):
@@ -361,10 +465,17 @@ async def get_package(merchant_id: str, address: str, background_tasks: Backgrou
     if lat is None:
         return {"error": "Invalid address"}
 
+    # 1. Gather Physical Environment Data
     weather = get_weather_context(lat, lon)
     traffic = get_traffic_context(lat, lon)
     schools = get_nearby_schools(lat, lon)
     
+    # 2. Gather External Market & Competitor Data 
+    # We pass UM related keywords to GNews, and the merchant's address to Serper
+    local_news = get_market_news("University of Malaya OR student holiday")
+    competitor_info = get_competitor_prices(address)
+
+    # 3. Gather Internal Business Data
     sales_insights = analyze_sales_trends(merchant_id)
 
     menu_res = supabase.table("menu_items") \
@@ -384,13 +495,16 @@ async def get_package(merchant_id: str, address: str, background_tasks: Backgrou
         .execute()
     sales_history = sales_res.data
 
+    # 4. Assemble the Ultimate Context Package
     context_package = {
         "merchant_id": merchant_id,
         "timestamp": datetime.now().isoformat(),
         "environmental_context": {
             "weather": weather,
             "traffic": traffic,
-            "nearby_schools": schools
+            "nearby_schools": schools,
+            "local_news": local_news,
+            "competitor_intel": competitor_info
         },
         "business_context": {
             "menu": menu_data,
@@ -398,6 +512,68 @@ async def get_package(merchant_id: str, address: str, background_tasks: Backgrou
         }
     }
     return context_package
+
+# AI Interrogation Endpoints 
+
+# 1. AI uses this to post a question to the Boss
+@app.post("/add-interrogation")
+async def add_interrogation(merchant_id: str, question: str):
+    data = {
+        "merchant_id": merchant_id,
+        "question": question,
+        "status": "pending"
+    }
+    try:
+        response = supabase.table("ai_interrogations").insert(data).execute()
+        return {"status": "success", "data": response.data}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+# 2. Boss (via Frontend) uses this to submit an answer
+@app.patch("/submit-answer/{interrogation_id}")
+async def submit_answer(interrogation_id: str, answer: str):
+    try:
+        # Update the specific interrogation with the answer and change status
+        response = supabase.table("ai_interrogations") \
+            .update({"user_answer": answer, "status": "answered"}) \
+            .eq("id", interrogation_id) \
+            .execute()
+        return {"status": "success", "message": "Answer saved!", "data": response.data}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+# Strategy & Bubble Endpoints 
+
+# 3. AI uses this to generate the 3 Strategy Bubbles
+@app.post("/create-strategy-proposals")
+async def create_proposals(merchant_id: str, proposals: list):
+    # 'proposals' should be a list of dicts like: 
+    # [{"bubble_type": "Aggressive", "ai_logic": "..."}, ...]
+    for p in proposals:
+        p["merchant_id"] = merchant_id
+    
+    try:
+        response = supabase.table("strategy_proposals").insert(proposals).execute()
+        return {"status": "success", "data": response.data}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+# 4. Boss selects one Bubble to trigger Swarm Debate
+@app.patch("/select-strategy/{proposal_id}")
+async def select_strategy(proposal_id: str):
+    try:
+        # Step A: Reset all choices for this merchant (optional, but cleaner)
+        # Step B: Mark the selected bubble as user_choice = True
+        response = supabase.table("strategy_proposals") \
+            .update({"user_choice": True}) \
+            .eq("id", proposal_id) \
+            .execute()
+        
+        # NOTE: After this, you can trigger the Swarm AI agent logic
+        return {"status": "success", "message": "Strategy selected. Swarm Debate starting!", "data": response.data}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 
 # Places API (New)
@@ -461,6 +637,29 @@ def get_coordinates(address):
         print(f"Geocoding Error: {e}")
         return None, None
     
+    # Turns coordinates back into a human-readable address
+def reverse_geocode(lat: float, lon: float):
+    api_key = os.getenv("GOOGLE_MAPS_API_KEY")
+    url = f"https://maps.googleapis.com/maps/api/geocode/json?latlng={lat},{lon}&key={api_key}"
+    
+    try:
+        response = requests.get(url).json()
+        if response["status"] == "OK":
+            # Returns the most formatted address (e.g., the full street address)
+            return response["results"][0]["formatted_address"]
+        return "Unknown Location"
+    except Exception as e:
+        return f"Error: {e}"
+    
+def get_details_from_place_id(place_id: str):
+    api_key = os.getenv("GOOGLE_MAPS_API_KEY")
+    url = f"https://maps.googleapis.com/maps/api/place/details/json?place_id={place_id}&key={api_key}"
+    response = requests.get(url).json()
+    if response["status"] == "OK":
+        location = response["result"]["geometry"]["location"]
+        return location["lat"], location["lng"]
+    return None, None
+
 #use Routes API for detect road situations
 #By comparing "normal time" and "traffic prediction time," AI can determine whether current road conditions are severely impacting business.
 def get_traffic_context(origin_lat, origin_lon):
@@ -535,4 +734,127 @@ def get_weather_context(lat, lon):
     except Exception as e:
         print(f"Connection Error: {e}")
         return None
+
+#  API 1: GNews API for Market Context 
+def get_market_news(query: str = "University of Malaya"):
+    # Fetch the API key from .env
+    api_key = os.getenv("GNEWS_API_KEY")
+    if not api_key:
+        return ["GNews API key missing. Please add to .env"]
+        
+    # Endpoint to search for news in Malaysia (country=my), max 3 articles
+    url = f"https://gnews.io/api/v4/search?q={query}&lang=en&country=my&max=3&apikey={api_key}"
     
+    try:
+        response = requests.get(url)
+        data = response.json()
+        
+        if "articles" in data:
+            # Extract the top 3 news titles and descriptions
+            news_list = []
+            for article in data["articles"]:
+                # Combine title and description for the AI to read
+                news_list.append(f"Headline: {article['title']} - Summary: {article['description']}")
+            return news_list
+        return ["No significant local news found."]
+    except Exception as e:
+        print(f"GNews API Error: {e}")
+        return ["Failed to fetch market news due to connection error."]
+
+
+# API 2: Serper Dev API for Competitor Intelligence 
+def get_competitor_prices(location: str):
+    # Fetch the API key from .env
+    api_key = os.getenv("SERPER_API_KEY")
+    if not api_key:
+        return ["Serper API key missing. Please add to .env"]
+        
+    url = "https://google.serper.dev/search"
+    
+    # Crafting a specific query to find cafe prices or promos near the location
+    search_query = f"cafe menu prices OR coffee promotion near {location} Malaysia"
+    
+    # Payload for the Google Search, 'gl': 'my' forces Malaysia search results
+    payload = {
+        "q": search_query, 
+        "gl": "my" 
+    }
+    headers = {
+        'X-API-KEY': api_key,
+        'Content-Type': 'application/json'
+    }
+    
+    try:
+        # Note: Serper uses POST request, unlike OpenWeather
+        response = requests.post(url, json=payload, headers=headers)
+        data = response.json()
+        
+        snippets = []
+        if "organic" in data:
+            # Get the text snippets from the top 3 Google search results
+            for item in data["organic"][:3]:
+                snippets.append(item.get("snippet", ""))
+        return snippets if snippets else ["No recent competitor pricing found."]
+    except Exception as e:
+        print(f"Serper API Error: {e}")
+        return ["Failed to fetch competitor data."]
+    
+# --- State Machine Control Console: Informs the front-end about the current stage ---
+@app.get("/get-merchant-state/{merchant_id}")
+async def get_merchant_state(merchant_id: str):
+    try:
+        # 1. Check if there are any questions that require the boss's answer (Phase 3)
+        interrogation_res = supabase.table("ai_interrogations") \
+            .select("*") \
+            .eq("merchant_id", merchant_id) \
+            .order("created_at", desc=True) \
+            .limit(1) \
+            .execute()
+            
+        latest_interrogation = interrogation_res.data[0] if interrogation_res.data else None
+        
+        if latest_interrogation and latest_interrogation["status"] == "pending":
+            return {
+                "current_phase": "PHASE_3_INTERROGATION",
+                "message": "AI has a question for the Boss.",
+                "data": latest_interrogation
+            }
+
+        # 2. Check if there are strategy bubbles waiting for the boss to choose (Phase 4)
+        # If the question has been answered and a strategy bubble has been generated, but no choice has been made yet.
+        proposals_res = supabase.table("strategy_proposals") \
+            .select("*") \
+            .eq("merchant_id", merchant_id) \
+            .order("created_at", desc=True) \
+            .limit(3) \
+            .execute()
+            
+        recent_proposals = proposals_res.data
+        
+        # Check if any of the recent proposals have been selected by the boss
+        has_selected = any(p.get("user_choice") == True for p in recent_proposals)
+        
+        if recent_proposals and not has_selected:
+            return {
+                "current_phase": "PHASE_4_BUBBLES",
+                "message": "Please select a strategy bubble.",
+                "data": recent_proposals
+            }
+            
+        if has_selected:
+            # find the selected strategy to pass to the Swarm Debate phase
+            selected_strategy = next((p for p in recent_proposals if p.get("user_choice") == True), None)
+            return {
+                "current_phase": "PHASE_5_SWARM_DEBATE",
+                "message": "Swarm debate is active based on user choice.",
+                "data": selected_strategy
+            }
+
+        # 3. Default state: normal, displaying Dashboard (Phase 1/2)
+        return {
+            "current_phase": "PHASE_NORMAL",
+            "message": "All good. System is analyzing background data."
+        }
+        
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
