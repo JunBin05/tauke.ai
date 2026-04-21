@@ -5,6 +5,7 @@ import requests
 import pandas as pd
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from typing import Optional, List, Dict, Any 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
@@ -43,9 +44,17 @@ class GoogleSyncRequest(BaseModel):
     name: str          
     shop_type: str     
 
+class LocationUpdateRequest(BaseModel):
+    merchant_id: str
+    address: Optional[str] = None
+    lat: Optional[float] = None
+    lon: Optional[float] = None
+    place_id: Optional[str] = None
+
 def check_and_notify_costs(merchant_id: str):
     now = datetime.now()
     current_year, current_month = now.year, now.month
+    
     
     try:
         response = supabase.table("monthly_overheads") \
@@ -78,33 +87,24 @@ def read_root():
     return {"message": "MicroEdge Backend 运行中!"}
 
 @app.post("/auth/signup")
-async def signup(req: SignupRequest):
+async def signup(req: SignupRequest): # <--- REMOVED extra string params
     try:
-        # 1. Create a secure account in Supabase Auth
         auth_response = supabase.auth.sign_up({
             "email": req.email,
             "password": req.password
         })
         
-        # If user creation is successful, link it to a new merchant profile
         if auth_response.user:
             user_id = auth_response.user.id
-            
-            # 2. Insert business details into the 'merchants' table
             merchant_data = {
-                "owner_id": user_id,  # Link the Supabase Auth ID
+                "owner_id": user_id,
                 "name": req.name,
                 "type": req.shop_type
             }
             supabase.table("merchants").insert(merchant_data).execute()
-            
-            return {
-                "status": "success", 
-                "message": "Sign up complete! Shop created.", 
-                "owner_id": user_id
-            }
+            return {"status": "success", "owner_id": user_id}
     except Exception as e:
-        return {"status": "error", "message": f"Signup failed: {e}"}
+        return {"status": "error", "message": str(e)}
 
 
 # --- 2. Login Endpoint ---
@@ -191,7 +191,6 @@ async def add_menu_item(merchant_id: str, item_name: str, original_price: float)
         }
     except Exception as e:
         return {"status": "error", "message": str(e)}
-
 
 @app.post("/upload-sales-logs-csv")
 async def upload_sales_logs_csv(merchant_id: str = Form(...), file: UploadFile = File(...)):
@@ -388,7 +387,45 @@ async def analyze_surroundings(merchant_id: str, lat: float, lon: float):
     # It includes the specific ID, the raw data, and our generated summary note.
     return {"merchant_id": merchant_id, "school_context": schools, "note": message}
     
+@app.post("/merchants/update-location")
+async def update_location(req: LocationUpdateRequest):
+    try:
+        final_lat, final_lon = req.lat, req.lon
+        final_address = req.address
 
+        # Scenario A: User selected a Place from a dropdown (Place ID)
+        if req.place_id:
+            final_lat, final_lon = get_details_from_place_id(req.place_id)
+            final_address = reverse_geocode(final_lat, final_lon)
+
+        # Scenario B: User typed a manual address but we need coordinates
+        elif req.address and (final_lat is None or final_lon is None):
+            final_lat, final_lon = get_coordinates(req.address)
+
+        # Scenario C: User used GPS (Lat/Lon) but we need the readable address
+        elif final_lat and final_lon and not req.address:
+            final_address = reverse_geocode(final_lat, final_lon)
+
+        if final_lat is None or final_lon is None:
+            return {"status": "error", "message": "Could not determine coordinates."}
+
+        # Save to Supabase
+        update_data = {
+            "address": final_address,
+            "latitude": final_lat,
+            "longitude": final_lon
+        }
+        
+        supabase.table("merchants").update(update_data).eq("owner_id", req.merchant_id).execute()
+
+        return {
+            "status": "success",
+            "message": "Shop location updated!",
+            "updated_data": update_data
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+    
 def analyze_sales_trends(merchant_id: str) -> list:
     # 1. Fetch raw data from Supabase (fetching last 7 days for this Hackathon demo)
     response = supabase.table("sales_logs") \
@@ -456,62 +493,56 @@ def analyze_sales_trends(merchant_id: str) -> list:
     
     return insights
 
-@app.get("/get-ai-decision-package/{merchant_id}")
-async def get_package(merchant_id: str, address: str, background_tasks: BackgroundTasks):
+# --- AI Generate Interrogation ---
+@app.post("/generate-ai-interrogation/{merchant_id}")
+async def generate_interrogation(merchant_id: str, context_package: dict):
+# Here we will pass the large JSON (context_package) we just saw in Swagger to Z.AI
+# Let Z.AI ask a profound question based on the contradiction of high foot traffic, good weather, but poor sales
+# Pseudocode approach:
+# prompt = f"Context: {context_package}. Found the contradiction and asked the boss."
+# Temporarily store it in the database so the frontend can retrieve this Pending question.
+    question = "I noticed high foot traffic but low sales. Did you change your menu prices recently?" 
     
+    data = {
+        "merchant_id": merchant_id,
+        "question": question,
+        "status": "pending"
+    }
+    supabase.table("ai_interrogations").insert(data).execute()
+    return {"status": "success", "ai_question": question}
+
+@app.get("/get-ai-decision-package/{merchant_id}")
+async def get_package(merchant_id: str, background_tasks: BackgroundTasks):
     background_tasks.add_task(check_and_notify_costs, merchant_id)
     
-    lat, lon = get_coordinates(address)
-    if lat is None:
-        return {"error": "Invalid address"}
+    # 1. Fetch location from DB
+    res = supabase.table("merchants").select("*").eq("owner_id", merchant_id).execute()
+    
+    if not res.data:
+        return {"status": "error", "message": "Merchant not found"}
+        
+    m_data = res.data[0]
+    lat = m_data.get("latitude")
+    lon = m_data.get("longitude")
+    address = m_data.get("address", "Unknown")
 
-    # 1. Gather Physical Environment Data
+    if not lat or not lon:
+        return {"status": "error", "message": "Please update your shop location first!"}
+
+    # Gather data using your helper functions
     weather = get_weather_context(lat, lon)
     traffic = get_traffic_context(lat, lon)
-    schools = get_nearby_schools(lat, lon)
+    foot_traffic = get_foot_traffic_context(lat, lon) 
     
-    # 2. Gather External Market & Competitor Data 
-    # We pass UM related keywords to GNews, and the merchant's address to Serper
-    local_news = get_market_news("University of Malaya OR student holiday")
-    competitor_info = get_competitor_prices(address)
-
-    # 3. Gather Internal Business Data
-    sales_insights = analyze_sales_trends(merchant_id)
-
-    menu_res = supabase.table("menu_items") \
-        .select("id, item_name, original_price") \
-        .eq("merchant_id", merchant_id) \
-        .eq("is_active", True) \
-        .execute()
-    menu_data = menu_res.data
-
-# Retrieve Sales History for the Last 7 Days
-# We linked the menu_items table so that the AI ​​can directly see the dish name instead of the ID.
-    sales_res = supabase.table("sales_logs") \
-        .select("quantity_sold, log_date, menu_items(item_name)") \
-        .eq("merchant_id", merchant_id) \
-        .order("log_date", desc=True) \
-        .limit(70) \
-        .execute()
-    sales_history = sales_res.data
-
-    # 4. Assemble the Ultimate Context Package
-    context_package = {
+    return {
         "merchant_id": merchant_id,
-        "timestamp": datetime.now().isoformat(),
+        "location": address,
         "environmental_context": {
             "weather": weather,
             "traffic": traffic,
-            "nearby_schools": schools,
-            "local_news": local_news,
-            "competitor_intel": competitor_info
-        },
-        "business_context": {
-            "menu": menu_data,
-            "trend_analysis": sales_insights
+            "foot_traffic": foot_traffic
         }
     }
-    return context_package
 
 # AI Interrogation Endpoints 
 
@@ -575,6 +606,30 @@ async def select_strategy(proposal_id: str):
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
+@app.post("/debate/save-proposals")
+async def save_proposals(merchant_id: str, proposals: List[Dict[str, Any]]):
+    # proposals must be a list of dicts with keys: perspective, risk, logic, is_most_preferred (boolean)
+    # [
+    #   {"perspective": "Challenger", "risk": "High", "logic": "...", "is_most_preferred": True},
+    #   {"perspective": "Conservative", "risk": "Low", "logic": "..."},
+    #   {"perspective": "Human", "risk": "Medium", "logic": "..."}
+    # ]
+    try:
+        # save in database for record-keeping and future analysis
+        supabase.table("strategy_proposals").insert(proposals).execute()
+        return {"status": "success", "message": "Debate results stored."}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+    
+@app.get("/debate/get-proposals/{merchant_id}")
+async def get_proposals(merchant_id: str):
+    # pass the risk levels and logic of each perspective to the frontend for display in the UI
+    res = supabase.table("strategy_proposals") \
+        .select("*") \
+        .eq("merchant_id", merchant_id) \
+        .order("risk_level") \
+        .execute()
+    return {"status": "success", "data": res.data}
 
 # Places API (New)
 def get_nearby_schools(lat, lon, radius=500):
@@ -696,6 +751,48 @@ def get_traffic_context(origin_lat, origin_lon):
     except:
         return {"status": "Normal", "delay_seconds": 0}
     
+# Foot Traffic API Integration 
+def get_foot_traffic_context(lat: float, lon: float):
+    """
+    Fetches foot traffic data using BestTime.py (or a similar provider).
+    This tells the AI if the area is currently 'Busy', 'Normal', or 'Quiet'.
+    """
+    api_key = os.getenv("BESTTIME_API_KEY") # You will need to add this to .env
+    
+    # If you don't have an API key yet, we'll return a 'Simulation' for the Hackathon
+    if not api_key:
+        print("⚠️ BestTime API Key missing. Returning simulated foot traffic data.")
+        return {
+            "status": "Busy",
+            "live_intensity": 85,  # Percentage of peak busyness
+            "note": "Simulated: High foot traffic due to nearby lunch crowd."
+        }
+
+    url = "https://besttime.app/api/v1/forecasts/now"
+    params = {
+        "api_key_private": api_key,
+        "lat": lat,
+        "lng": lon
+    }
+
+    try:
+        # Note: BestTime usually requires a specific venue/address to be accurate
+        # Here we simulate the query based on the merchant's coordinates
+        response = requests.get(url, params=params, timeout=10)
+        data = response.json()
+        
+        if data.get("status") == "OK":
+            analysis = data.get("analysis", {})
+            return {
+                "status": analysis.get("venue_forecast_status", "Normal"),
+                "live_intensity": analysis.get("venue_live_busyness", 50),
+                "note": "Live data from BestTime API."
+            }
+        return {"status": "Normal", "live_intensity": 50, "note": "API call failed, defaulted to Normal."}
+    except Exception as e:
+        print(f"Foot Traffic API Error: {e}")
+        return {"status": "Unknown", "live_intensity": 0, "note": "Connection error."}
+
 # use Maps Grounding Lite for detect day festivals
 def get_event_grounding(merchant_location, user_query):
     # Your friend (AI Engineer) will use this data to ground the GLM [cite: 39]
@@ -803,7 +900,7 @@ def get_competitor_prices(location: str):
 @app.get("/get-merchant-state/{merchant_id}")
 async def get_merchant_state(merchant_id: str):
     try:
-        # 1. Check if there are any questions that require the boss's answer (Phase 3)
+        # 1. Phase 3: Check for pending AI interrogation
         interrogation_res = supabase.table("ai_interrogations") \
             .select("*") \
             .eq("merchant_id", merchant_id) \
@@ -812,7 +909,6 @@ async def get_merchant_state(merchant_id: str):
             .execute()
             
         latest_interrogation = interrogation_res.data[0] if interrogation_res.data else None
-        
         if latest_interrogation and latest_interrogation["status"] == "pending":
             return {
                 "current_phase": "PHASE_3_INTERROGATION",
@@ -820,37 +916,53 @@ async def get_merchant_state(merchant_id: str):
                 "data": latest_interrogation
             }
 
-        # 2. Check if there are strategy bubbles waiting for the boss to choose (Phase 4)
-        # If the question has been answered and a strategy bubble has been generated, but no choice has been made yet.
-        proposals_res = supabase.table("strategy_proposals") \
+        # 2. Phase 5: Check if the boss has ALREADY selected a strategy
+        selected_res = supabase.table("strategy_proposals") \
             .select("*") \
             .eq("merchant_id", merchant_id) \
-            .order("created_at", desc=True) \
-            .limit(3) \
+            .eq("user_choice", True) \
+            .limit(1) \
             .execute()
             
-        recent_proposals = proposals_res.data
-        
-        # Check if any of the recent proposals have been selected by the boss
-        has_selected = any(p.get("user_choice") == True for p in recent_proposals)
-        
-        if recent_proposals and not has_selected:
-            return {
-                "current_phase": "PHASE_4_BUBBLES",
-                "message": "Please select a strategy bubble.",
-                "data": recent_proposals
-            }
-            
-        if has_selected:
-            # find the selected strategy to pass to the Swarm Debate phase
-            selected_strategy = next((p for p in recent_proposals if p.get("user_choice") == True), None)
+        if selected_res.data:
             return {
                 "current_phase": "PHASE_5_SWARM_DEBATE",
                 "message": "Swarm debate is active based on user choice.",
-                "data": selected_strategy
+                "data": selected_res.data[0]
             }
 
-        # 3. Default state: normal, displaying Dashboard (Phase 1/2)
+        # 3. Phase 4 (First Step): Show the "Most Preferred" strategy
+        preferred_res = supabase.table("strategy_proposals") \
+            .select("*") \
+            .eq("merchant_id", merchant_id) \
+            .eq("is_preferred", True) \
+            .eq("is_skipped", False) \
+            .execute()
+        
+        if preferred_res.data:
+            return {
+                "current_phase": "PHASE_4_PREFERRED_CHOICE",
+                "message": "AI has a top recommendation for you.",
+                "data": preferred_res.data[0] # return the most preferred strategy that has not been skipped
+            }
+
+        # 4. Phase 4 (Give-in Step): Show extra suggestions if the preferred one was skipped
+        extra_res = supabase.table("strategy_proposals") \
+            .select("*") \
+            .eq("merchant_id", merchant_id) \
+            .eq("is_preferred", False) \
+            .order("risk_level") \
+            .limit(3) \
+            .execute()
+            
+        if extra_res.data:
+            return {
+                "current_phase": "PHASE_4_GIVE_IN_SUGGESTIONS",
+                "message": "Here are 3 extra suggestions based on your feedback.",
+                "data": extra_res.data 
+            }
+
+        # 5. Phase 1/2: Default State
         return {
             "current_phase": "PHASE_NORMAL",
             "message": "All good. System is analyzing background data."
@@ -858,3 +970,4 @@ async def get_merchant_state(merchant_id: str):
         
     except Exception as e:
         return {"status": "error", "message": str(e)}
+    
