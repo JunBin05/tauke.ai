@@ -1,10 +1,12 @@
 import base64
+import csv
 import io
 import json
 import os
 import re
 import requests
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any, Dict, List, Optional, Tuple
 
 import fitz
@@ -12,7 +14,7 @@ import pandas as pd
 import zhipuai
 import concurrent
 from dotenv import find_dotenv, load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import BackgroundTasks, FastAPI, HTTPException, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from supabase import Client, create_client
@@ -588,21 +590,29 @@ def _replace_operating_expenses(supabase: Client, summary_id: str, rows: List[Di
 @app.get("/analyze-surroundings/{merchant_id}")
 async def analyze_surroundings(merchant_id: str, lat: float, lon: float):
     # Now it fetches everything: Offices, Schools, Banks, etc.
+     # Uses a 1km radius so the AI has a full picture of who is around the shop.
     neighborhood = get_neighborhood_context(lat, lon)
 
     # Simple logic for the summary message
     office_count = len([x for x in neighborhood if x['category'] == "Office/Workplace"])
     edu_count = len([x for x in neighborhood if x['category'] == "Education"])
 
-    message = f"Location Analysis: {office_count} offices and {edu_count} schools nearby."
-    
+    if neighborhood:
+        message = (
+            f"Location Analysis: {office_count} offices and {edu_count} schools nearby. "
+            f"Closest landmark: {neighborhood[0]['name']}."
+        )
+    else:
+        message = "No nearby locations found in 1km."
+
     return {
         "merchant_id": merchant_id, 
         "neighborhood_data": neighborhood, 
         "note": message
     }
+
 def get_neighborhood_context(lat, lon, radius=1000):
-    api_key = os.getenv("GOOGLE_MAPS_API_KEY")
+    api_key = os.getenv("GOOGLE_PLACES_API_KEY")
     url = "https://places.googleapis.com/v1/places:searchNearby"
     
     headers = {
@@ -799,9 +809,9 @@ def _fetch_financial_comparison(supabase: Client, merchant_id: str, target_month
     }
 
 def _fetch_traffic_signal(lat: float, lon: float) -> Dict[str, Any]:
-    api_key = os.getenv("GOOGLE_MAPS_API_KEY")
+    api_key = os.getenv("GOOGLE_PLACES_API_KEY")
     if not api_key:
-        return {"attempted": True, "status": "error", "error": "Missing GOOGLE_MAPS_API_KEY", "data": {}}
+        return {"attempted": True, "status": "error", "error": "Missing GOOGLE_PLACES_API_KEY", "data": {}}
 
     url = "https://routes.googleapis.com/directions/v2:computeRoutes"
     headers = {
@@ -861,7 +871,7 @@ def _fetch_foot_traffic_signal(lat: float, lon: float) -> Dict[str, Any]:
         return {"attempted": True, "status": "error", "error": str(exc), "data": {}}
     
 def get_coordinates(address):
-    api_key = os.getenv("GOOGLE_MAPS_API_KEY")
+    api_key = os.getenv("GOOGLE_PLACES_API_KEY")
     url = f"https://maps.googleapis.com/maps/api/geocode/json?address={address}&key={api_key}"
     try:
         response = requests.get(url).json()
@@ -869,22 +879,24 @@ def get_coordinates(address):
             location = response["results"][0]["geometry"]["location"]
             return location["lat"], location["lng"]
         return None, None
-    except:
+    except Exception as e:
+        print(f"Geocoding Error: {e}")
         return None, None
     
+# Turns coordinates back into a human-readable address (e.g. full street address)
 def reverse_geocode(lat: float, lon: float):
-    api_key = os.getenv("GOOGLE_MAPS_API_KEY")
+    api_key = os.getenv("GOOGLE_PLACES_API_KEY")
     url = f"https://maps.googleapis.com/maps/api/geocode/json?latlng={lat},{lon}&key={api_key}"
     try:
         response = requests.get(url).json()
         if response.get("status") == "OK":
             return response["results"][0]["formatted_address"]
         return "Unknown Location"
-    except:
-        return f"Error mapping location"
+    except Exception as e:
+        return f"Error: {e}"
     
 def get_details_from_place_id(place_id: str):
-    api_key = os.getenv("GOOGLE_MAPS_API_KEY")
+    api_key = os.getenv("GOOGLE_PLACES_API_KEY")
     url = f"https://maps.googleapis.com/maps/api/place/details/json?place_id={place_id}&key={api_key}"
     try:
         response = requests.get(url).json()
@@ -892,7 +904,8 @@ def get_details_from_place_id(place_id: str):
             location = response["result"]["geometry"]["location"]
             return location["lat"], location["lng"]
         return None, None
-    except:
+    except Exception as e:
+        print(f"Place Details Error: {e}")
         return None, None
     
 def _fetch_merchant_profile(supabase: Client, merchant_id: str) -> str:
@@ -1330,17 +1343,23 @@ async def update_location(req: LocationUpdateRequest):
     try:
         final_lat, final_lon, final_address = req.lat, req.lon, req.address
 
+        # Scenario A: User selected a Place from a dropdown (Place ID)
         if req.place_id:
             final_lat, final_lon = get_details_from_place_id(req.place_id)
             final_address = reverse_geocode(final_lat, final_lon)
+
+         # Scenario B: User typed a manual address but we need coordinates
         elif req.address and (final_lat is None or final_lon is None):
             final_lat, final_lon = get_coordinates(req.address)
+
+        # Scenario C: User used GPS (Lat/Lon) but we need the readable address
         elif final_lat and final_lon and not req.address:
             final_address = reverse_geocode(final_lat, final_lon)
 
         if final_lat is None or final_lon is None:
             return {"status": "error", "message": "Could not determine coordinates."}
 
+        #save to database
         update_data = {"address": final_address, "latitude": final_lat, "longitude": final_lon}
         supabase.table("merchants").update(update_data).eq("owner_id", req.merchant_id).execute()
 
