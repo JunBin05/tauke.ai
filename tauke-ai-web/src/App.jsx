@@ -11,6 +11,7 @@ import FinalSynthesis from "./pages/FinalSynthesis";
 import CampaignRoadmap from "./pages/CampaignRoadmap";
 import Landing from "./pages/Landing";
 import LoadingPage from "./pages/LoadingPage";
+import GoogleSync from "./pages/GoogleSync";
 
 function App() {
   return (
@@ -28,6 +29,7 @@ function App() {
         <Route path="/campaign-roadmap" element={<CampaignRoadmap />} />
         <Route path="/landing" element={<Landing />} />
         <Route path="/loading" element={<LoadingPage />} />
+        <Route path="/sync" element={<GoogleSync />} />
       </Routes>
     </BrowserRouter>
   );
