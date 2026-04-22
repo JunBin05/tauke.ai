@@ -12,6 +12,9 @@ import CampaignRoadmap from "./pages/CampaignRoadmap";
 import Landing from "./pages/Landing";
 import LoadingPage from "./pages/LoadingPage";
 import GoogleSync from "./pages/GoogleSync";
+// Inside your App.jsx Router:
+import Simulation from './pages/Simulation';
+import Dashboard from './pages/Dashboard';
 
 function App() {
   return (
@@ -30,6 +33,8 @@ function App() {
         <Route path="/landing" element={<Landing />} />
         <Route path="/loading" element={<LoadingPage />} />
         <Route path="/sync" element={<GoogleSync />} />
+        <Route path="/simulation" element={<Simulation />} />
+        <Route path="/dashboard" element={<Dashboard />} />
       </Routes>
     </BrowserRouter>
   );

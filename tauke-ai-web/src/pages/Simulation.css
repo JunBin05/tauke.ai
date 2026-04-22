@@ -1,0 +1,78 @@
+/* --- DANIEL'S SWARM UI STYLES --- */
+:root {
+  --primary: #0058bc;
+  --primary-container: #0070eb;
+  --secondary: #006e28;
+  --surface: #f9f9fb;
+  --on-surface: #1a1c1d;
+  --on-surface-variant: #414755;
+  --outline: #717786;
+  --error: #ba1a1a;
+}
+
+.app-container, .dashboard-container {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  padding: 1.5rem;
+  position: relative;
+  overflow: hidden;
+  background-color: var(--surface);
+}
+
+.bg-decor-top {
+  position: fixed; top: -10%; right: -10%; width: 40%; aspect-ratio: 1;
+  background-color: rgba(0, 88, 188, 0.05); filter: blur(120px); border-radius: 9999px; z-index: 0;
+}
+.bg-decor-bottom {
+  position: fixed; bottom: -10%; left: -10%; width: 40%; aspect-ratio: 1;
+  background-color: rgba(0, 110, 40, 0.05); filter: blur(120px); border-radius: 9999px; z-index: 0;
+}
+
+.header {
+  position: fixed; top: 0; left: 0; width: 100%; z-index: 50; display: flex;
+  justify-content: space-between; align-items: center; padding: 1.5rem 2.5rem;
+  background: rgba(255, 255, 255, 0.7); backdrop-filter: blur(32px);
+  box-shadow: 0px 4px 20px rgba(0, 0, 0, 0.05);
+}
+
+.label-caps {
+  font-size: 0.625rem; font-weight: 700; letter-spacing: 0.3em;
+  text-transform: uppercase; color: var(--primary); margin-bottom: 0.5rem;
+}
+
+.glass-card {
+  width: 100%; aspect-ratio: 21 / 9; background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(32px); border-radius: 1.5rem;
+  box-shadow: 0px 4px 20px rgba(0, 0, 0, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.4); position: relative;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 4rem; overflow: hidden;
+}
+
+.person-icon {
+  width: 4rem; height: 4rem; border-radius: 9999px; display: flex;
+  align-items: center; justify-content: center; border: 2px solid transparent;
+  transition: all 0.4s ease; background-color: #e8e8ea;
+}
+.person-icon.active {
+  background-color: white; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); border-color: var(--primary);
+}
+
+.progress-container {
+  height: 3px; width: 100%; background-color: #eeeef0; border-radius: 9999px; overflow: hidden;
+}
+.progress-fill {
+  height: 100%; background: linear-gradient(to right, var(--primary), var(--primary-container));
+}
+.chip {
+  padding: 0.75rem 1.5rem; border-radius: 9999px; background: rgba(255,255,255,0.5);
+  backdrop-filter: blur(12px); border: 1px solid rgba(0,0,0,0.03); display: flex;
+  align-items: center; gap: 1rem;
+}
+
+.stat-card, .chart-card {
+  background: rgba(255, 255, 255, 0.7); backdrop-filter: blur(12px);
+  padding: 2rem; border-radius: 1.5rem; border: 1px solid rgba(255, 255, 255, 0.5);
+  box-shadow: 0px 4px 20px rgba(0, 0, 0, 0.03);
+}

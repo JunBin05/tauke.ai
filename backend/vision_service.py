@@ -27,9 +27,11 @@ MASTER_EXTRACT_PROMPT = (
     "You are an F&B Financial Auditor for a Malaysian Cafe. Analyze this document and extract all financial data into a strict JSON format. "
     "1. If you see fixed costs (e.g., Rent, Payroll, TNB, Syabas, KWSP, Utilities), put them in 'operating_expenses'. "
     "2. If you see ingredient purchases (e.g., Chicken, Beans, Milk, Ice), put them in 'supplier_invoices'. "
-    "\\n\\nRETURN ONLY JSON IN THIS EXACT FORMAT: "
+    "3. If this is a Profit & Loss statement, extract the top-line sales number into 'total_revenue'. Look for terms like 'Total Revenue', 'Total Sales', 'Gross Sales', 'Turnover', 'Total Income', or 'Gross Profit'. \n\n"
+    "RETURN ONLY JSON IN THIS EXACT FORMAT: "
     "{"
     "  \"document_type\": \"pl_statement\" | \"supplier_invoice\" | \"mixed\","
+    "  \"total_revenue\": 0.00,"
     "  \"operating_expenses\": ["
     "    {\"expense_type\": \"Rent|Payroll|Utilities|Other\", \"amount\": 0.00}"
     "  ],"
@@ -385,70 +387,47 @@ def _normalize_invoice_rows(parsed: Any) -> List[Dict[str, Any]]:
 
 
 def _coerce_master_payload(parsed: Any) -> Dict[str, Any]:
-    # Expected shape:
-    # {
-    #   "document_type": "pl_statement|supplier_invoice|mixed",
-    #   "operating_expenses": [...],
-    #   "supplier_invoices": [...]
-    # }
     if isinstance(parsed, dict):
-        # Handle alternative wrappers that models often emit.
+        # 🚀 THE FIX: Tell the bouncer to specifically grab the revenue!
+        extracted_rev = _to_float(
+            parsed.get("total_revenue") or parsed.get("gross_sales") or parsed.get("revenue"), 
+            0.0
+        )
+
         if "operating_expenses" in parsed or "supplier_invoices" in parsed:
             return {
                 "document_type": str(parsed.get("document_type", "unknown")).strip().lower(),
+                "total_revenue": extracted_rev, # 👈 Officially supported!
                 "operating_expenses": parsed.get("operating_expenses") or parsed.get("expenses") or [],
                 "supplier_invoices": parsed.get("supplier_invoices") or parsed.get("invoices") or parsed.get("items") or [],
             }
 
-        # If dict is a single row-like structure, wrap it into one of the arrays.
         if "expense_type" in parsed and "amount" in parsed:
             return {
                 "document_type": "pl_statement",
+                "total_revenue": extracted_rev,
                 "operating_expenses": [parsed],
                 "supplier_invoices": [],
             }
         if "item_name" in parsed and "total_amount" in parsed:
             return {
                 "document_type": "supplier_invoice",
+                "total_revenue": extracted_rev,
                 "operating_expenses": [],
                 "supplier_invoices": [parsed],
             }
 
         return {
             "document_type": str(parsed.get("document_type", "unknown")).strip().lower(),
+            "total_revenue": extracted_rev,
             "operating_expenses": [],
             "supplier_invoices": [],
         }
 
-    if isinstance(parsed, list):
-        operating_expenses: List[Dict[str, Any]] = []
-        supplier_invoices: List[Dict[str, Any]] = []
-
-        for row in parsed:
-            if not isinstance(row, dict):
-                continue
-            if "expense_type" in row and "amount" in row:
-                operating_expenses.append(row)
-            elif "item_name" in row and "total_amount" in row:
-                supplier_invoices.append(row)
-
-        if operating_expenses and supplier_invoices:
-            doc_type = "mixed"
-        elif operating_expenses:
-            doc_type = "pl_statement"
-        elif supplier_invoices:
-            doc_type = "supplier_invoice"
-        else:
-            doc_type = "unknown"
-
-        return {
-            "document_type": doc_type,
-            "operating_expenses": operating_expenses,
-            "supplier_invoices": supplier_invoices,
-        }
-
+    # If it's a list, fallback
     return {
         "document_type": "unknown",
+        "total_revenue": 0.0,
         "operating_expenses": [],
         "supplier_invoices": [],
     }
@@ -2110,6 +2089,221 @@ def generate_roadmap(payload: GenerateRoadmapRequest) -> Dict[str, Any]:
 
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Roadmap generation failed: {exc}") from exc
+
+class SingleUploadRequest(BaseModel):
+    merchant_id: str
+    report_month: str
+    file_data_url: str
+
+class AnalyzeMonthRequest(BaseModel):
+    merchant_id: str
+    report_month: str
+
+# ---------------------------------------------------------
+# 1. THE STATUS CHECKER
+# ---------------------------------------------------------
+@app.get("/merchants/{merchant_id}/sync-status/{report_month}")
+def get_sync_status(merchant_id: str, report_month: str) -> Dict[str, Any]:
+    supabase = get_supabase_client()
+    
+    # 1. Fetch actual shop_id
+    shop_res = supabase.table("merchants").select("shop_id").eq("owner_id", merchant_id).limit(1).execute()
+    actual_shop_id = shop_res.data[0]["shop_id"] if shop_res.data else None
+
+    # Check Sales using actual_shop_id
+    start_iso, end_iso = _month_window(report_month)
+    has_sales = False
+    if actual_shop_id:
+        sales_res = supabase.table("sales_logs").select("id").eq("merchant_id", actual_shop_id).gte("logged_at", start_iso).lt("logged_at", end_iso).limit(1).execute()
+        has_sales = len(sales_res.data) > 0
+
+    # 🚀 THE FIX: Check Summary using actual_shop_id instead of owner_id!
+    has_summary = False
+    if actual_shop_id:
+        summary_res = supabase.table("monthly_summaries").select("id").eq("merchant_id", actual_shop_id).eq("report_month", report_month).limit(1).execute()
+        has_summary = len(summary_res.data) > 0
+
+    return {
+        "status": "success",
+        "month": report_month,
+        "sync_state": {
+            "sales": {"isSynced": has_sales, "isUploading": False},
+            "procurement": {"isSynced": has_summary, "isUploading": False},
+            "invoices": {"isSynced": has_summary, "isUploading": False}
+        },
+        "all_synced": has_sales and has_summary
+    }
+
+# ---------------------------------------------------------
+# 2. THE INGESTORS (Separate Uploads)
+# ---------------------------------------------------------
+@app.post("/upload/sales")
+def upload_sales_csv(payload: SingleUploadRequest):
+    supabase = get_supabase_client()
+    csv_mime, csv_bytes = _decode_data_url(payload.file_data_url)
+    
+    sales_df = _parse_sales_logs_csv(csv_bytes)
+    
+    # --- 🛠️ FIX: Fetch actual shop_id to satisfy foreign key ---
+    shop_res = supabase.table("merchants").select("shop_id").eq("owner_id", payload.merchant_id.strip()).limit(1).execute()
+    if not shop_res.data:
+        raise HTTPException(status_code=404, detail="Merchant shop not found.")
+    actual_shop_id = str(shop_res.data[0]["shop_id"])
+    
+    # Save directly to the database using actual_shop_id
+    inserted_sales_logs, total_revenue, category_revenue = _ingest_sales_logs(
+        supabase=supabase,
+        merchant_id=actual_shop_id, # <--- 🚀 Replaced payload.merchant_id
+        report_month=payload.report_month,
+        sales_df=sales_df,
+        batch_size=1000,
+    )
+    
+    return {"status": "success", "message": f"Saved {inserted_sales_logs} rows.", "revenue": total_revenue}
+
+@app.post("/upload/statement")
+def upload_statement_pdf(payload: SingleUploadRequest):
+    supabase = get_supabase_client()
+    owner_id = payload.merchant_id.strip()
+
+    # 1. Fetch actual shop_id
+    shop_res = supabase.table("merchants").select("shop_id").eq("owner_id", owner_id).limit(1).execute()
+    if not shop_res.data:
+        raise HTTPException(status_code=404, detail="Merchant shop not found.")
+    actual_shop_id = str(shop_res.data[0]["shop_id"])
+
+    # 2. Decode and prep the file for the AI
+    mime, raw_bytes = _decode_data_url(payload.file_data_url)
+    pages = _render_pdf_pages_as_data_urls(raw_bytes) if mime == "application/pdf" else [payload.file_data_url]
+
+    # 3. Run the REAL Vision LLM Extraction
+    client = get_zhipu_client()
+    operating_expenses = []
+    total_revenue = 0.0 
+
+    for page in pages:
+        parsed = _vision_json(client, page, MASTER_EXTRACT_PROMPT)
+        parsed_obj = _coerce_master_payload(parsed)
+        
+        # 🚀 Now we safely grab it from the cleaned object!
+        page_revenue = parsed_obj.get("total_revenue", 0.0)
+        if page_revenue > total_revenue:
+            total_revenue = page_revenue
+
+        operating_expenses.extend(_normalize_pl_rows(parsed_obj.get("operating_expenses", [])))
+
+    total_fixed_costs = round(sum(row["amount"] for row in operating_expenses), 2)
+
+    # 5. Save the summary total and the individual line items to the database
+    summary_payload = {
+        "merchant_id": actual_shop_id,
+        "report_month": payload.report_month,
+        "total_revenue": round(total_revenue, 2),
+        "total_fixed_costs": total_fixed_costs
+    }
+    summary_id = _upsert_monthly_summary(supabase, summary_payload)
+    _replace_operating_expenses(supabase, summary_id, operating_expenses)
+
+    return {
+        "status": "success",
+        "message": f"Processed {len(operating_expenses)} expenses via AI.",
+        "total_extracted": total_fixed_costs
+    }
+
+@app.post("/upload/invoices")
+def upload_invoices_pdf(payload: SingleUploadRequest):
+    supabase = get_supabase_client()
+    owner_id = payload.merchant_id.strip()
+
+    # 1. Fetch actual shop_id
+    shop_res = supabase.table("merchants").select("shop_id").eq("owner_id", owner_id).limit(1).execute()
+    if not shop_res.data:
+        raise HTTPException(status_code=404, detail="Merchant shop not found.")
+    actual_shop_id = str(shop_res.data[0]["shop_id"])
+
+    # 2. Decode and prep the file for the AI
+    mime, raw_bytes = _decode_data_url(payload.file_data_url)
+    pages = _render_pdf_pages_as_data_urls(raw_bytes) if mime == "application/pdf" else [payload.file_data_url]
+
+    # 3. Run the REAL Vision LLM Extraction
+    client = get_zhipu_client()
+    supplier_invoices = []
+
+    for page in pages:
+        parsed = _vision_json(client, page, MASTER_EXTRACT_PROMPT)
+        parsed_obj = _coerce_master_payload(parsed)
+        supplier_invoices.extend(_normalize_invoice_rows(parsed_obj.get("supplier_invoices", [])))
+
+    # 4. Calculate the true total variable/ingredient costs
+    total_ingredient_costs = round(sum(row["total_amount"] for row in supplier_invoices), 2)
+
+    # 5. Save the summary total and individual line items
+    summary_payload = {
+        "merchant_id": actual_shop_id,
+        "report_month": payload.report_month,
+        "total_ingredient_costs": total_ingredient_costs
+    }
+    summary_id = _upsert_monthly_summary(supabase, summary_payload)
+    _replace_supplier_invoices(supabase, summary_id, supplier_invoices)
+
+    return {
+        "status": "success",
+        "message": f"Processed {len(supplier_invoices)} invoices via AI.",
+        "total_extracted": total_ingredient_costs
+    }
+
+# ---------------------------------------------------------
+# 3. THE CRUNCHER (Pattern Recognition)
+# ---------------------------------------------------------
+@app.post("/analyze/monthly-patterns")
+def analyze_monthly_patterns(payload: AnalyzeMonthRequest):
+    supabase = get_supabase_client()
+    owner_id = payload.merchant_id.strip() 
+    report_month = payload.report_month
+    
+    # --- 🛠️ Fetch actual shop_id ---
+    shop_res = supabase.table("merchants").select("shop_id").eq("owner_id", owner_id).limit(1).execute()
+    if not shop_res.data:
+        raise HTTPException(status_code=404, detail="Merchant shop not found.")
+    actual_shop_id = str(shop_res.data[0]["shop_id"])
+
+    # 1. Grab the total revenue from the CSV data
+    start_iso, end_iso = _month_window(report_month)
+    sales_res = supabase.table("sales_logs").select("price, quantity").eq("merchant_id", actual_shop_id).gte("logged_at", start_iso).lt("logged_at", end_iso).execute()
+    
+    total_revenue = sum([row["price"] * row["quantity"] for row in sales_res.data]) if sales_res.data else 0.0
+    
+    # 2. 🚀 THE REAL FIX: Fetch the actual costs uploaded by the Vision LLM 🚀
+    summary_res = supabase.table("monthly_summaries").select("total_fixed_costs, total_ingredient_costs").eq("merchant_id", actual_shop_id).eq("report_month", report_month).limit(1).execute()
+    
+    total_fixed_costs = 0.0
+    total_ingredient_costs = 0.0
+    
+    if summary_res.data:
+        existing_summary = summary_res.data[0]
+        # Use .get() with a fallback to 0.0 in case the AI couldn't find any expenses
+        total_fixed_costs = existing_summary.get("total_fixed_costs") or 0.0
+        total_ingredient_costs = existing_summary.get("total_ingredient_costs") or 0.0
+
+    # 3. Calculate REAL net profit
+    net_profit = total_revenue - total_fixed_costs - total_ingredient_costs
+
+    # 4. Save the final summary USING actual_shop_id
+    summary_payload = {
+        "merchant_id": actual_shop_id, 
+        "report_month": report_month,
+        "total_revenue": round(total_revenue, 2),
+        "total_fixed_costs": round(total_fixed_costs, 2),
+        "total_ingredient_costs": round(total_ingredient_costs, 2),
+        "net_profit": round(net_profit, 2),
+    }
+    
+    _upsert_monthly_summary(supabase, summary_payload)
+    
+    # 5. Trigger the Pattern Recognition Math
+    _fetch_diagnostic_patterns(supabase, actual_shop_id, report_month)
+
+    return {"status": "success", "message": "Analysis complete!"}
 
 
 if __name__ == "__main__":
