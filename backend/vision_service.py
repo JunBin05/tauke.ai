@@ -70,10 +70,16 @@ class WhatIfSimulationRequest(BaseModel):
     boss_idea: str = Field(min_length=1)
     customer_distribution_json: str = Field(default="{}")
 
-class SetupProfileRequest(BaseModel):
-    merchant_id: str  # We need this to know which shop to update
-    target_audience: str
+class ProfileSetupRequest(BaseModel):
+    merchant_id: str
+    name: str
+    type: str
+    pricing_tier: str       # 👈 New
     operating_hours: str
+    target_audience: dict   # 👈 Receives the JSON audience mix
+    address: str            # 👈 New
+    latitude: float         # 👈 New
+    longitude: float        # 👈 New
 
 class SignupRequest(BaseModel):
     email: str
@@ -1544,23 +1550,24 @@ async def update_location(req: LocationUpdateRequest):
         return {"status": "error", "message": str(e)}
     
 @app.post("/merchants/setup-profile")
-async def setup_profile(req: SetupProfileRequest):
+async def setup_profile(req: ProfileSetupRequest):
     supabase = get_supabase_client()
     try:
-        # We only update the specific fields they filled out in the onboarding UI
         update_data = {
-            "target_audience": req.target_audience,
-            "operating_hours": req.operating_hours
+            "name": req.name,
+            "type": req.type,
+            "pricing_tier": req.pricing_tier,
+            "operating_hours": req.operating_hours,
+            "target_audience": req.target_audience, # JSONB handles dicts automatically
+            "address": req.address,
+            "latitude": req.latitude,
+            "longitude": req.longitude
         }
         
-        # We use .update() because the row was already created during /auth/signup
-        response = supabase.table("merchants").update(update_data).eq("owner_id", req.merchant_id).execute()
+        # Use owner_id to update the specific merchant record
+        supabase.table("merchants").update(update_data).eq("owner_id", req.merchant_id).execute()
         
-        return {
-            "status": "success", 
-            "message": "Shop profile setup complete!", 
-            "data": response.data
-        }
+        return {"status": "success", "message": "Profile fully initialized!"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
