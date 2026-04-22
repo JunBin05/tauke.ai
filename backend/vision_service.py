@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import fitz
 import pandas as pd
 import zhipuai
+import concurrent
 from dotenv import find_dotenv, load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -61,6 +62,33 @@ class BoardroomContinueRequest(BaseModel):
     target_month: str = Field(min_length=7)
     boss_answers: str = Field(min_length=1)
 
+class SetupProfileRequest(BaseModel):
+    merchant_id: str  # We need this to know which shop to update
+    target_audience: str
+    operating_hours: str
+
+class SignupRequest(BaseModel):
+    email: str
+    password: str
+    name: str          
+    shop_type: str     
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+    
+class GoogleSyncRequest(BaseModel):
+    access_token: str
+    name: str          
+    shop_type: str     
+
+class LocationUpdateRequest(BaseModel):
+    merchant_id: str
+    address: Optional[str] = None
+    lat: Optional[float] = None
+    lon: Optional[float] = None
+    place_id: Optional[str] = None
+
 
 app = FastAPI(title="Vision Financial Upload Service", version="2.0.0")
 
@@ -72,6 +100,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 
 def get_zhipu_api_key() -> str:
@@ -556,6 +585,71 @@ def _replace_operating_expenses(supabase: Client, summary_id: str, rows: List[Di
     supabase.table("operating_expenses").insert(payload).execute()
     return len(payload)
 
+@app.get("/analyze-surroundings/{merchant_id}")
+async def analyze_surroundings(merchant_id: str, lat: float, lon: float):
+    # Now it fetches everything: Offices, Schools, Banks, etc.
+    neighborhood = get_neighborhood_context(lat, lon)
+
+    # Simple logic for the summary message
+    office_count = len([x for x in neighborhood if x['category'] == "Office/Workplace"])
+    edu_count = len([x for x in neighborhood if x['category'] == "Education"])
+
+    message = f"Location Analysis: {office_count} offices and {edu_count} schools nearby."
+    
+    return {
+        "merchant_id": merchant_id, 
+        "neighborhood_data": neighborhood, 
+        "note": message
+    }
+def get_neighborhood_context(lat, lon, radius=1000):
+    api_key = os.getenv("GOOGLE_MAPS_API_KEY")
+    url = "https://places.googleapis.com/v1/places:searchNearby"
+    
+    headers = {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": api_key,
+        "X-Goog-FieldMask": "places.displayName,places.types"
+    }
+
+    # 🚀 We now search for a variety of "Business Drivers" 🚀
+    payload = {
+        "includedTypes": [
+            "school", "university", "corporate_office", 
+            "business_center", "bank", "government_office",
+            "hospital", "park"
+        ], 
+        "maxResultCount": 10,
+        "locationRestriction": {
+            "circle": {
+                "center": {"latitude": lat, "longitude": lon},
+                "radius": radius # Increased to 1km to catch offices
+            }
+        }
+    }
+
+    try:
+        response = requests.post(url, json=payload, headers=headers)
+        data = response.json()
+        
+        context_items = []
+        if "places" in data:
+            for place in data["places"]:
+                # We categorize them so the AI understands who the audience is
+                types = place.get("types", [])
+                category = "General"
+                if "corporate_office" in types or "business_center" in types:
+                    category = "Office/Workplace"
+                elif "university" in types or "school" in types:
+                    category = "Education"
+                
+                context_items.append({
+                    "name": place["displayName"]["text"],
+                    "category": category
+                })
+        return context_items
+    except Exception as e:
+        print(f"Neighborhood API Error: {e}")
+        return []
 
 def _replace_supplier_invoices(supabase: Client, summary_id: str, rows: List[Dict[str, Any]]) -> int:
     supabase.table("supplier_invoices").delete().eq("summary_id", summary_id).execute()
@@ -704,7 +798,103 @@ def _fetch_financial_comparison(supabase: Client, merchant_id: str, target_month
         },
     }
 
+def _fetch_traffic_signal(lat: float, lon: float) -> Dict[str, Any]:
+    api_key = os.getenv("GOOGLE_MAPS_API_KEY")
+    if not api_key:
+        return {"attempted": True, "status": "error", "error": "Missing GOOGLE_MAPS_API_KEY", "data": {}}
 
+    url = "https://routes.googleapis.com/directions/v2:computeRoutes"
+    headers = {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": api_key,
+        "X-Goog-FieldMask": "routes.duration,routes.staticDuration,routes.condition"
+    }
+    
+    # Simulate a short trip to measure local traffic density
+    payload = {
+        "origin": {"location": {"latLng": {"latitude": lat, "longitude": lon}}},
+        "destination": {"location": {"latLng": {"latitude": lat + 0.01, "longitude": lon + 0.01}}},
+        "travelMode": "DRIVE",
+        "routingPreference": "TRAFFIC_AWARE"
+    }
+
+    try:
+        resp = requests.post(url, json=payload, headers=headers, timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
+        
+        duration = int(data["routes"][0]["duration"][:-1])
+        static_duration = int(data["routes"][0]["staticDuration"][:-1])
+        delay = duration - static_duration
+        
+        status = "Heavy Traffic" if delay > 300 else "Clear"
+        return {"attempted": True, "status": "ok", "provider": "google_routes", "data": {"traffic_status": status, "delay_seconds": delay}}
+    except Exception as exc:
+        return {"attempted": True, "status": "error", "error": str(exc), "data": {}}
+
+def _fetch_foot_traffic_signal(lat: float, lon: float) -> Dict[str, Any]:
+    api_key = os.getenv("BESTTIME_API_KEY")
+    if not api_key:
+        return {"attempted": True, "status": "ok", "provider": "simulation", "data": {"status": "Busy", "live_intensity": 85, "note": "Simulated foot traffic"}}
+
+    url = "https://besttime.app/api/v1/forecasts/now"
+    params = {"api_key_private": api_key, "lat": lat, "lng": lon}
+
+    try:
+        resp = requests.get(url, params=params, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        
+        if data.get("status") == "OK":
+            analysis = data.get("analysis", {})
+            return {
+                "attempted": True, 
+                "status": "ok", 
+                "provider": "besttime", 
+                "data": {
+                    "status": analysis.get("venue_forecast_status", "Normal"),
+                    "live_intensity": analysis.get("venue_live_busyness", 50)
+                }
+            }
+        return {"attempted": True, "status": "error", "error": "API returned non-OK status", "data": {}}
+    except Exception as exc:
+        return {"attempted": True, "status": "error", "error": str(exc), "data": {}}
+    
+def get_coordinates(address):
+    api_key = os.getenv("GOOGLE_MAPS_API_KEY")
+    url = f"https://maps.googleapis.com/maps/api/geocode/json?address={address}&key={api_key}"
+    try:
+        response = requests.get(url).json()
+        if response.get("status") == "OK":
+            location = response["results"][0]["geometry"]["location"]
+            return location["lat"], location["lng"]
+        return None, None
+    except:
+        return None, None
+    
+def reverse_geocode(lat: float, lon: float):
+    api_key = os.getenv("GOOGLE_MAPS_API_KEY")
+    url = f"https://maps.googleapis.com/maps/api/geocode/json?latlng={lat},{lon}&key={api_key}"
+    try:
+        response = requests.get(url).json()
+        if response.get("status") == "OK":
+            return response["results"][0]["formatted_address"]
+        return "Unknown Location"
+    except:
+        return f"Error mapping location"
+    
+def get_details_from_place_id(place_id: str):
+    api_key = os.getenv("GOOGLE_MAPS_API_KEY")
+    url = f"https://maps.googleapis.com/maps/api/place/details/json?place_id={place_id}&key={api_key}"
+    try:
+        response = requests.get(url).json()
+        if response.get("status") == "OK":
+            location = response["result"]["geometry"]["location"]
+            return location["lat"], location["lng"]
+        return None, None
+    except:
+        return None, None
+    
 def _fetch_merchant_profile(supabase: Client, merchant_id: str) -> str:
     res = (
         supabase.table("merchants")
@@ -735,13 +925,21 @@ def _target_month_date_range(target_month: str) -> Tuple[str, str]:
     return month_start.strftime("%Y-%m-%d"), month_end
 
 
-def _fetch_news_signal(target_month: str) -> Dict[str, Any]:
+# 👇 Notice we added merchant_profile so we can search for local news!
+def _fetch_news_signal(merchant_profile: str, target_month: str) -> Dict[str, Any]:
     gnews_api_key = os.getenv("GNEWS_API_KEY")
     if not gnews_api_key:
         return {"attempted": True, "status": "error", "error": "Missing GNEWS_API_KEY", "data": []}
 
     start_date, end_date = _target_month_date_range(target_month)
-    query = f"Malaysia food OR cafe OR restaurant {target_month}"
+    
+    # 1. 🚨 We use the location hint to get hyper-local news! 🚨
+    location_hint = _extract_location_hint(merchant_profile)
+    # 👇 🚨 THE HYBRID QUERY 🚨 👇
+    # We tell GNews to find EITHER local events OR Malaysia-wide economic shifts (petrol, inflation, tax, subsidies).
+    # We also remove {target_month} from the text string because the `start_date` and `end_date` parameters already filter the exact dates perfectly!
+    query = f'("{location_hint}" AND (cafe OR food OR event)) OR (Malaysia AND (economy OR petrol OR inflation OR subsidy OR tax))'
+    
     try:
         url = "https://gnews.io/api/v4/search"
         params = {
@@ -761,9 +959,10 @@ def _fetch_news_signal(target_month: str) -> Dict[str, Any]:
         compact = [
             {
                 "title": row.get("title", ""),
+                # 2. 🚨 We copied the description extraction from main.py 🚨
+                "description": row.get("description", ""), 
                 "source": (row.get("source") or {}).get("name", "") if isinstance(row.get("source"), dict) else "",
                 "published_at": row.get("publishedAt", ""),
-                "url": row.get("url", ""),
             }
             for row in rows[:5]
             if isinstance(row, dict)
@@ -773,12 +972,16 @@ def _fetch_news_signal(target_month: str) -> Dict[str, Any]:
         return {"attempted": True, "status": "error", "error": str(exc), "data": []}
 
 
-def _fetch_web_signal(target_month: str) -> Dict[str, Any]:
+# 👇 Notice we added merchant_profile as a parameter here to get the location!
+def _fetch_web_signal(merchant_profile: str, target_month: str) -> Dict[str, Any]:
     serper_api_key = os.getenv("SERPER_API_KEY")
     if not serper_api_key:
         return {"attempted": True, "status": "error", "error": "Missing SERPER_API_KEY", "data": []}
 
-    query = f"Malaysia cafe promotion OR restaurant promo OR local event {target_month}"
+    # 1. We copy the location trick from main.py
+    location_hint = _extract_location_hint(merchant_profile)
+    query = f"cafe menu prices OR coffee promotion near {location_hint} {target_month}"
+    
     try:
         url = "https://google.serper.dev/search"
         headers = {"X-API-KEY": serper_api_key, "Content-Type": "application/json"}
@@ -790,7 +993,8 @@ def _fetch_web_signal(target_month: str) -> Dict[str, Any]:
         compact = [
             {
                 "title": row.get("title", ""),
-                "source": row.get("source", ""),
+                # 2. 🚨 We copied the snippet extraction from main.py 🚨
+                "snippet": row.get("snippet", ""), 
                 "date": row.get("date", ""),
                 "url": row.get("link", ""),
             }
@@ -814,8 +1018,17 @@ def _fetch_places_signal(merchant_profile: str) -> Dict[str, Any]:
 
     query = f"cafe OR restaurant near {_extract_location_hint(merchant_profile)}"
     try:
-        url = "https://maps.googleapis.com/maps/api/place/textsearch/json"
-        params = {"query": query, "key": places_api_key}
+        url = "https://gnews.io/api/v4/search"
+        params = {
+            "query": query,
+            "from": start_date,
+            "to": end_date,
+            "lang": "en",
+            "country": "my",
+            "max": 5, # Grabs the top 5 articles across both categories
+            "sortby": "relevance", # Changed from publishedAt to relevance to get the most impactful news
+            "apikey": gnews_api_key,
+        }
         resp = requests.get(url, params=params, timeout=25)
         resp.raise_for_status()
         body = resp.json()
@@ -880,6 +1093,8 @@ def _fetch_weather_signal(merchant_profile: str, target_month: str) -> Dict[str,
             "current_temp_c": _to_float(main_obj.get("temp"), 0.0),
             "humidity_pct": _to_float(main_obj.get("humidity"), 0.0),
             "condition": weather[0].get("main", "") if weather and isinstance(weather[0], dict) else "",
+            # 🚨 We copied the detailed description from main.py 🚨
+            "description": weather[0].get("description", "") if weather and isinstance(weather[0], dict) else "",
             "rain_1h_mm": _to_float(rain_obj.get("1h"), 0.0),
         }
         return {"attempted": True, "status": "ok", "provider": "openweather", "data": summary}
@@ -887,19 +1102,34 @@ def _fetch_weather_signal(merchant_profile: str, target_month: str) -> Dict[str,
         return {"attempted": True, "status": "error", "error": str(exc), "data": {}}
 
 
-def _fetch_external_signals(merchant_profile: str, target_month: str) -> Dict[str, Any]:
-    news = _fetch_news_signal(target_month)
-    web = _fetch_web_signal(target_month)
+# 👇 Notice we added `supabase` and `merchant_id` to the parameters
+def _fetch_external_signals(supabase: Client, merchant_id: str, merchant_profile: str, target_month: str) -> Dict[str, Any]:
+    # 1. Fetch existing signals
+    news = _fetch_news_signal(merchant_profile, target_month)
+    web = _fetch_web_signal(merchant_profile, target_month)
     places = _fetch_places_signal(merchant_profile)
     weather = _fetch_weather_signal(merchant_profile, target_month)
+    
+    # 2. Fetch the exact Lat/Lon for this merchant from the database
+    res = supabase.table("merchants").select("latitude, longitude").eq("owner_id", merchant_id).limit(1).execute()
+    
+    traffic = {"status": "skipped", "reason": "No coordinates"}
+    foot_traffic = {"status": "skipped", "reason": "No coordinates"}
+    
+    # 3. If they have a location set, run the Live Pulse APIs!
+    if res.data and res.data[0].get("latitude") and res.data[0].get("longitude"):
+        lat = float(res.data[0]["latitude"])
+        lon = float(res.data[0]["longitude"])
+        traffic = _fetch_traffic_signal(lat, lon)
+        foot_traffic = _fetch_foot_traffic_signal(lat, lon)
+
     return {
         "news": news,
         "web": web,
         "places": places,
         "weather": weather,
-        "required_tools_attempted": bool(
-            news.get("attempted") and web.get("attempted") and places.get("attempted") and weather.get("attempted")
-        ),
+        "traffic": traffic,           # 👈 NEW!
+        "foot_traffic": foot_traffic, # 👈 NEW!
     }
 
 
@@ -1016,18 +1246,16 @@ def _strategist_action_plan_prompt(
     diagnostic_json: Dict[str, Any],
     boss_answers: str,
     final_approved_theory: str,
+    external_signals: Dict[str, Any], # 👈 NEW: Add this parameter
 ) -> Tuple[str, str]:
     system_prompt = (
         "You are an elite F&B Business Strategist. You have just read the Final Theory regarding why this business's revenue shifted. "
-        "You also have their 12-point internal data patterns and their merchant profile. "
+        "You also have their 12-point internal data patterns, their merchant profile, and real-world external signals. "
         "Your task is to generate the 'Top 3 Strategic Action Plans' for the Boss to execute immediately.\n\n"
         "Strict Rules:\n\n"
         "No Generic Advice: Do NOT say 'Run a social media campaign' or 'Offer a discount.'\n\n"
-        "Hyper-Specific: You must name specific items from their data (e.g., 'Kopi C Ais', 'Nasi Lemak Ayam'), specify exact times of day "
-        "(e.g., 'Target the 2 PM - 6 PM Afternoon slump'), and suggest specific price points or bundle strategies based on their "
-        "Average Order Value (AOV) and Units Per Transaction (UPT).\n\n"
-        "Leverage Strengths: If a specific item or time block grew (e.g., 'Evening sales grew 5%'), at least one suggestion must focus "
-        "on accelerating that growth, not just fixing the drops.\n\n"
+        "Hyper-Specific: You must name specific items from their data... and suggest specific price points or bundle strategies...\n\n"
+        "Context Aware: You MUST factor in the external signals (weather, events, competitors) when designing these strategies.\n\n"
         "Format: Output the response as 3 distinct, bolded Action Items, each followed by a short paragraph explaining the exact 'Why' "
         "and 'How' based strictly on the data."
     )
@@ -1035,6 +1263,8 @@ def _strategist_action_plan_prompt(
         f"Merchant profile:\n{merchant_profile}\n\n"
         "12-point diagnostic JSON:\n"
         f"{json.dumps(diagnostic_json, indent=2)}\n\n"
+        "External Signals (Weather, Events, Competitors):\n" # 👈 NEW: Injecting the data
+        f"{json.dumps(external_signals, indent=2)}\n\n"
         "Boss answers:\n"
         f"{boss_answers}\n\n"
         "Final approved theory:\n"
@@ -1047,6 +1277,97 @@ def _strategist_action_plan_prompt(
 def healthcheck() -> Dict[str, str]:
     return {"status": "ok"}
 
+@app.post("/auth/signup")
+async def signup(req: SignupRequest):
+    supabase = get_supabase_client()
+    try:
+        auth_response = supabase.auth.sign_up({"email": req.email, "password": req.password})
+        if auth_response.user:
+            user_id = auth_response.user.id
+            merchant_data = {"owner_id": user_id, "name": req.name, "type": req.shop_type}
+            supabase.table("merchants").insert(merchant_data).execute()
+            return {"status": "success", "owner_id": user_id}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.post("/auth/login")
+async def login(req: LoginRequest):
+    supabase = get_supabase_client()
+    try:
+        response = supabase.auth.sign_in_with_password({"email": req.email, "password": req.password})
+        return {
+            "status": "success",
+            "message": "Login successful!",
+            "access_token": response.session.access_token,
+            "owner_id": response.user.id
+        }
+    except Exception as e:
+        return {"status": "error", "message": f"Login failed: {e}"}
+
+@app.post("/auth/sync-google-profile")
+async def sync_google_profile(req: GoogleSyncRequest):
+    supabase = get_supabase_client()
+    try:
+        user_response = supabase.auth.get_user(req.access_token)
+        if not user_response.user:
+            return {"status": "error", "message": "Invalid access token"}
+
+        user_id = user_response.user.id
+        existing_shop = supabase.table("merchants").select("*").eq("owner_id", user_id).execute()
+        
+        if existing_shop.data:
+            return {"status": "success", "message": "Welcome back!", "owner_id": user_id}
+
+        merchant_data = {"owner_id": user_id, "name": req.name, "type": req.shop_type}
+        supabase.table("merchants").insert(merchant_data).execute()
+        return {"status": "success", "message": "Google profile linked!", "owner_id": user_id}
+    except Exception as e:
+        return {"status": "error", "message": f"Google sync failed: {e}"}
+
+@app.post("/merchants/update-location")
+async def update_location(req: LocationUpdateRequest):
+    supabase = get_supabase_client()
+    try:
+        final_lat, final_lon, final_address = req.lat, req.lon, req.address
+
+        if req.place_id:
+            final_lat, final_lon = get_details_from_place_id(req.place_id)
+            final_address = reverse_geocode(final_lat, final_lon)
+        elif req.address and (final_lat is None or final_lon is None):
+            final_lat, final_lon = get_coordinates(req.address)
+        elif final_lat and final_lon and not req.address:
+            final_address = reverse_geocode(final_lat, final_lon)
+
+        if final_lat is None or final_lon is None:
+            return {"status": "error", "message": "Could not determine coordinates."}
+
+        update_data = {"address": final_address, "latitude": final_lat, "longitude": final_lon}
+        supabase.table("merchants").update(update_data).eq("owner_id", req.merchant_id).execute()
+
+        return {"status": "success", "message": "Shop location updated!", "updated_data": update_data}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+    
+@app.post("/merchants/setup-profile")
+async def setup_profile(req: SetupProfileRequest):
+    supabase = get_supabase_client()
+    try:
+        # We only update the specific fields they filled out in the onboarding UI
+        update_data = {
+            "target_audience": req.target_audience,
+            "operating_hours": req.operating_hours
+        }
+        
+        # We use .update() because the row was already created during /auth/signup
+        response = supabase.table("merchants").update(update_data).eq("owner_id", req.merchant_id).execute()
+        
+        return {
+            "status": "success", 
+            "message": "Shop profile setup complete!", 
+            "data": response.data
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 @app.post("/analyze-financial-document")
 def analyze_financial_document(payload: AnalyzeFinancialDocumentRequest) -> Dict[str, Any]:
@@ -1213,7 +1534,7 @@ def boardroom_continue(payload: BoardroomContinueRequest) -> Dict[str, Any]:
         financial_comparison = _fetch_financial_comparison(supabase, merchant_id, target_month)
         diagnostic_json = _fetch_diagnostic_patterns(supabase, merchant_id, target_month)
         merchant_profile = _fetch_merchant_profile(supabase, merchant_id)
-        external_signals = _fetch_external_signals(merchant_profile, target_month)
+        external_signals = _fetch_external_signals(supabase, merchant_id, merchant_profile, target_month)
 
         analyst_sys, analyst_usr = _analyst_synthesis_prompt(
             merchant_profile=merchant_profile,
@@ -1246,6 +1567,11 @@ def boardroom_continue(payload: BoardroomContinueRequest) -> Dict[str, Any]:
             )
             strategist_action_plan = _call_text_llm(llm_client, strategist_sys, strategist_usr, temperature=0.2)
 
+            supabase.table("monthly_summaries").update({
+                "boss_context": boss_answers,
+                "approved_theory": final_approved_theory
+            }).eq("merchant_id", merchant_id).eq("report_month", target_month).execute()
+
         return {
             "merchant_id": merchant_id,
             "target_month": target_month,
@@ -1261,6 +1587,79 @@ def boardroom_continue(payload: BoardroomContinueRequest) -> Dict[str, Any]:
         raise
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Boardroom continue failed: {exc}") from exc
+    
+class BoardroomDebateRequest(BaseModel):
+    merchant_id: str = Field(min_length=1)
+    target_month: str = Field(min_length=7)
+    proposed_strategies: str = Field(min_length=1)
+    merchant_profile: str = Field(default="")
+    external_signals: Dict[str, Any] = Field(default_factory=dict)
+    
+    # 👇 NEW: Catching the Internal Signals!
+    diagnostic_patterns: Dict[str, Any] = Field(default_factory=dict)
+    approved_theory: str = Field(default="")
+
+@app.post("/boardroom/debate")
+def boardroom_debate(payload: BoardroomDebateRequest) -> Dict[str, Any]:
+    try:
+        llm_client = get_zhipu_client()
+        user_prompt = (
+            f"--- BUSINESS CONTEXT ---\n"
+            f"Merchant Profile: {payload.merchant_profile}\n\n"
+            
+            f"--- INTERNAL SIGNALS ---\n"
+            f"Diagnostic Data: {json.dumps(payload.diagnostic_patterns, indent=2)}\n"
+            f"Approved Business Theory (includes Boss's input): {payload.approved_theory}\n\n"
+            
+            f"--- EXTERNAL SIGNALS ---\n"
+            f"Real-World Data (Weather, Events, Competitors):\n"
+            f"{json.dumps(payload.external_signals, indent=2)}\n\n"
+            
+            f"--- THE TASK ---\n"
+            f"Here are the 3 proposed strategies to analyze:\n{payload.proposed_strategies}"
+        )
+        
+        # 1. Define the 3 distinct Agent personas
+        cmo_sys = "You are the CMO (Growth Hacker). Briefly analyze these 3 strategies. Which one drives the most traffic? Point out the marketing pros and cons. Keep it conversational like a chat message (2-3 sentences)."
+        coo_sys = "You are the COO (Kitchen Operations). Briefly analyze these 3 strategies. Which one breaks kitchen flow or staff capacity? Point out the logistical pros and cons. Keep it conversational like a chat message (2-3 sentences)."
+        cfo_sys = "You are the CFO (Risk Manager). Briefly analyze these 3 strategies. Which one ruins our profit margins? Point out the financial pros and cons. Keep it conversational like a chat message (2-3 sentences)."
+
+        # 2. Run the 3 Agents IN PARALLEL (Massive speed boost!)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+            future_cmo = executor.submit(_call_text_llm, llm_client, cmo_sys, user_prompt, 0.4)
+            future_coo = executor.submit(_call_text_llm, llm_client, coo_sys, user_prompt, 0.4)
+            future_cfo = executor.submit(_call_text_llm, llm_client, cfo_sys, user_prompt, 0.4)
+            
+            cmo_text = future_cmo.result()
+            coo_text = future_coo.result()
+            cfo_text = future_cfo.result()
+
+        # 3. The "Final Boss" Synthesis
+        boss_sys = (
+            "You are the CEO. Read your executives' opinions on the 3 strategies. "
+            "You must select ONE final strategy to execute that perfectly balances growth, operations, and finance. "
+            "Write your final decision clearly and state why you chose it over the others."
+        )
+        boss_usr = f"CMO says:\n{cmo_text}\n\nCOO says:\n{coo_text}\n\nCFO says:\n{cfo_text}\n\nWhat is your final decision?"
+        
+        boss_text = _call_text_llm(llm_client, boss_sys, boss_usr, 0.2)
+
+        # 4. Stitch it together into the "Chat Bubble" JSON array for Next.js!
+        # Notice we don't need dangerous Regex anymore; we control the JSON directly!
+        debate_script = [
+            {"speaker": "CMO", "text": cmo_text},
+            {"speaker": "COO", "text": coo_text},
+            {"speaker": "CFO", "text": cfo_text},
+            {"speaker": "FINAL DECISION", "text": boss_text}
+        ]
+        
+        return {
+            "status": "success",
+            "debate_script": debate_script
+        }
+        
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Parallel debate generation failed: {exc}") from exc
 
 
 if __name__ == "__main__":
