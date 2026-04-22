@@ -1,0 +1,218 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Material+Symbols+Outlined:wght,FILL@400,1&display=swap");
+
+.landing-page,
+.landing-page * {
+    box-sizing: border-box;
+}
+
+.landing-page {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    background: #f8f9fb;
+    color: #171a22;
+    font-family: "Inter", sans-serif;
+    -webkit-font-smoothing: antialiased;
+}
+
+.landing-hero {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 96px 24px 72px;
+    position: relative;
+    overflow: hidden;
+}
+
+.hero-glow {
+    position: absolute;
+    width: 920px;
+    height: 920px;
+    border-radius: 999px;
+    background: radial-gradient(circle, rgba(0, 88, 188, 0.14) 0%, rgba(0, 88, 188, 0) 68%);
+    pointer-events: none;
+    transform: translateY(-10%);
+}
+
+.hero-content {
+    position: relative;
+    z-index: 1;
+    width: 100%;
+    max-width: 980px;
+    text-align: center;
+}
+
+.hero-brand {
+    margin: 0;
+    font-size: 21px;
+    line-height: 1.2;
+    font-weight: 900;
+    letter-spacing: -0.02em;
+}
+
+.hero-title {
+    margin: 22px auto 0;
+    max-width: 900px;
+    color: #171a22;
+    font-size: 68px;
+    line-height: 1.03;
+    letter-spacing: -0.045em;
+    font-weight: 900;
+}
+
+.hero-subtitle {
+    margin: 26px auto 0;
+    max-width: 720px;
+    color: #6f788b;
+    font-size: 22px;
+    line-height: 1.45;
+    font-weight: 500;
+}
+
+.analyse-button {
+    margin: 52px auto 0;
+    border: 0;
+    border-radius: 999px;
+    background: linear-gradient(135deg, #0058bc 0%, #0073f0 100%);
+    color: #ffffff;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 13px;
+    padding: 24px 62px;
+    font-size: 30px;
+    line-height: 1.15;
+    font-weight: 900;
+    letter-spacing: -0.02em;
+    box-shadow: 0 18px 50px rgba(0, 88, 188, 0.32);
+    transition: transform 0.2s ease, box-shadow 0.25s ease;
+}
+
+.analyse-button .material-symbols-outlined {
+    width: 30px;
+    height: 30px;
+    font-size: 30px;
+    transition: transform 0.2s ease;
+}
+
+.analyse-button:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 24px 64px rgba(0, 88, 188, 0.38);
+}
+
+.analyse-button:hover .material-symbols-outlined {
+    transform: translateX(2px);
+}
+
+.landing-footer {
+    border-top: 1px solid #eaedf2;
+    background: #fafbfd;
+    padding: 20px 24px;
+}
+
+.footer-shell {
+    width: 100%;
+    max-width: 1080px;
+    margin: 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+}
+
+.footer-copy {
+    margin: 0;
+    color: #9ca4b3;
+    font-size: 11px;
+    line-height: 1.3;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    font-weight: 600;
+}
+
+.footer-links {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+
+.footer-links a {
+    color: #8e98a9;
+    font-size: 11px;
+    line-height: 1.2;
+    text-decoration: none;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    font-weight: 600;
+}
+
+.footer-links a:hover {
+    color: #5f6879;
+}
+
+@media (max-width: 980px) {
+    .landing-hero {
+        padding-top: 76px;
+    }
+
+    .hero-title {
+        font-size: 54px;
+    }
+
+    .hero-subtitle {
+        font-size: 19px;
+        max-width: 640px;
+    }
+
+    .analyse-button {
+        font-size: 26px;
+        padding: 20px 46px;
+    }
+}
+
+@media (max-width: 680px) {
+    .landing-hero {
+        padding: 58px 16px 44px;
+    }
+
+    .hero-brand {
+        font-size: 18px;
+    }
+
+    .hero-title {
+        margin-top: 16px;
+        font-size: 40px;
+        line-height: 1.08;
+    }
+
+    .hero-subtitle {
+        margin-top: 18px;
+        font-size: 16px;
+        line-height: 1.5;
+    }
+
+    .analyse-button {
+        margin-top: 34px;
+        width: 100%;
+        max-width: 380px;
+        font-size: 24px;
+        padding: 18px 24px;
+    }
+
+    .footer-shell {
+        flex-direction: column;
+        align-items: center;
+    }
+
+    .footer-copy {
+        text-align: center;
+    }
+
+    .footer-links {
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 12px;
+    }
+}

@@ -1,0 +1,503 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Material+Symbols+Outlined:wght,FILL@400,1&display=swap");
+
+.war-room-page,
+.war-room-page * {
+    box-sizing: border-box;
+}
+
+.war-room-page {
+    min-height: 100vh;
+    display: flex;
+    background: #f3f5f9;
+    color: #1c212d;
+    font-family: "Inter", sans-serif;
+    -webkit-font-smoothing: antialiased;
+}
+
+.war-room-sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 220px;
+    min-width: 220px;
+    border-right: 1px solid #e5e9f1;
+    background: #ffffff;
+    padding: 16px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    box-shadow: 8px 0 24px rgba(15, 23, 42, 0.04);
+}
+
+.sidebar-brand-block {
+    padding: 8px 10px 14px;
+}
+
+.sidebar-brand-title {
+    margin: 0;
+    font-size: 18px;
+    line-height: 1.2;
+    font-weight: 900;
+    letter-spacing: -0.02em;
+}
+
+.sidebar-brand-subtitle {
+    margin: 4px 0 0;
+    color: #6b7384;
+    font-size: 11px;
+    line-height: 1.2;
+}
+
+.sidebar-nav {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.sidebar-nav-item {
+    width: 100%;
+    border-radius: 10px;
+    padding: 8px 9px;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    text-decoration: none;
+    color: #677186;
+    font-size: 11px;
+    line-height: 1.25;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+    transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+.sidebar-nav-item:hover {
+    background: #f3f6fc;
+    color: #304569;
+}
+
+.sidebar-nav-icon {
+    width: 18px;
+    height: 18px;
+    font-size: 18px;
+    color: #7e8899;
+    transition: color 0.2s ease;
+}
+
+.sidebar-nav-item:hover .sidebar-nav-icon {
+    color: #5a6884;
+}
+
+.sidebar-nav-item.is-active {
+    background: #edf3ff;
+    color: #0058bc;
+}
+
+.sidebar-nav-item.is-active .sidebar-nav-icon {
+    color: #0058bc;
+}
+
+.sidebar-user-block {
+    margin-top: auto;
+    padding: 10px;
+    border-top: 1px solid #eaedf4;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.sidebar-avatar {
+    width: 30px;
+    height: 30px;
+    border-radius: 999px;
+    background: #eaf0fb;
+    color: #0058bc;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.sidebar-user-name {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.2;
+    font-weight: 700;
+    color: #222738;
+}
+
+.sidebar-user-meta {
+    margin: 2px 0 0;
+    font-size: 11px;
+    line-height: 1.2;
+    color: #6f7788;
+}
+
+.war-room-main {
+    width: calc(100% - 220px);
+    margin-left: 220px;
+    padding: 30px 20px 24px;
+}
+
+.war-room-shell {
+    width: 100%;
+    max-width: 1080px;
+    margin: 0 auto;
+}
+
+.war-room-header {
+    margin-bottom: 18px;
+}
+
+.war-room-step {
+    margin: 0;
+    color: #3866aa;
+    font-size: 11px;
+    line-height: 1.2;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+.war-room-title {
+    margin: 10px 0 0;
+    color: #1a1f2a;
+    font-size: 46px;
+    line-height: 1.02;
+    letter-spacing: -0.03em;
+    font-weight: 900;
+}
+
+.war-room-subtitle {
+    margin: 10px 0 0;
+    max-width: 700px;
+    color: #697387;
+    font-size: 15px;
+    line-height: 1.5;
+}
+
+.debate-panel {
+    border-radius: 28px;
+    border: 1px solid #1f2c44;
+    padding: 22px;
+    background:
+        radial-gradient(circle at 15% -20%, rgba(55, 95, 166, 0.28) 0%, transparent 42%),
+        radial-gradient(circle at 85% 0%, rgba(1, 119, 255, 0.22) 0%, transparent 37%),
+        linear-gradient(180deg, #0f1728 0%, #111d31 62%, #101a2b 100%);
+    box-shadow: 0 16px 38px rgba(8, 19, 39, 0.35), inset 0 1px 0 rgba(202, 220, 255, 0.05), inset 0 -14px 28px rgba(4, 9, 18, 0.35);
+    color: #e9eef9;
+}
+
+.debate-panel-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 14px;
+}
+
+.debate-panel-kicker {
+    margin: 0;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1.2;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #94a8cc;
+}
+
+.debate-panel-title {
+    margin: 8px 0 0;
+    font-size: 25px;
+    line-height: 1.2;
+    letter-spacing: -0.02em;
+    font-weight: 800;
+    color: #f4f7ff;
+}
+
+.debate-status-card {
+    width: 248px;
+    flex-shrink: 0;
+    border-radius: 14px;
+    border: 1px solid rgba(145, 170, 216, 0.26);
+    background: rgba(10, 20, 37, 0.64);
+    padding: 10px 12px;
+}
+
+.status-label {
+    margin: 0;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1.2;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #99abcc;
+}
+
+.status-value {
+    margin: 6px 0 0;
+    font-size: 12px;
+    line-height: 1.35;
+    color: #e2eaf8;
+}
+
+.status-track {
+    width: 100%;
+    height: 6px;
+    margin-top: 8px;
+    border-radius: 999px;
+    background: rgba(101, 122, 161, 0.5);
+    overflow: hidden;
+}
+
+.status-fill {
+    width: 72%;
+    height: 100%;
+    border-radius: 999px;
+    background: linear-gradient(90deg, #4b87e7 0%, #70a6ff 100%);
+}
+
+.debate-feed {
+    margin-top: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+}
+
+.agent-card {
+    border-radius: 16px;
+    border: 1px solid rgba(140, 161, 199, 0.2);
+    background: rgba(13, 27, 48, 0.7);
+    padding: 13px;
+    display: flex;
+    align-items: flex-start;
+    gap: 11px;
+    box-shadow: inset 0 1px 0 rgba(181, 202, 240, 0.06);
+}
+
+.agent-icon-wrap {
+    width: 36px;
+    height: 36px;
+    border-radius: 999px;
+    border: 1px solid rgba(131, 157, 201, 0.38);
+    background: rgba(29, 53, 87, 0.45);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: #bdd0ef;
+    flex-shrink: 0;
+}
+
+.agent-icon-wrap .material-symbols-outlined {
+    width: 18px;
+    height: 18px;
+    font-size: 18px;
+}
+
+.agent-content {
+    flex: 1;
+}
+
+.agent-top-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.agent-role {
+    margin: 0;
+    color: #f4f7ff;
+    font-size: 14px;
+    line-height: 1.3;
+    font-weight: 700;
+}
+
+.stance-pill {
+    border-radius: 999px;
+    padding: 4px 9px;
+    font-size: 10px;
+    line-height: 1.2;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-weight: 800;
+    white-space: nowrap;
+}
+
+.agent-copy {
+    margin: 7px 0 0;
+    color: #ccd9f0;
+    font-size: 12px;
+    line-height: 1.45;
+}
+
+.agent-indicator-row {
+    margin-top: 8px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.indicator-label {
+    color: #9fb0ce;
+    font-size: 11px;
+    line-height: 1.2;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-weight: 700;
+}
+
+.indicator-value {
+    border-radius: 999px;
+    padding: 3px 8px;
+    font-size: 10px;
+    line-height: 1.2;
+    font-weight: 700;
+}
+
+.tone-up {
+    color: #b7f4cf;
+    background: rgba(12, 121, 80, 0.24);
+}
+
+.tone-down {
+    color: #ffced1;
+    background: rgba(175, 39, 61, 0.28);
+}
+
+.tone-neutral {
+    color: #dce6fa;
+    background: rgba(72, 105, 167, 0.3);
+}
+
+.debate-actions {
+    margin-top: 16px;
+    padding-top: 14px;
+    border-top: 1px solid rgba(151, 174, 215, 0.25);
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 10px;
+}
+
+.secondary-action,
+.primary-action {
+    border-radius: 999px;
+    padding: 10px 16px;
+    font-size: 13px;
+    line-height: 1.2;
+    font-weight: 700;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    cursor: pointer;
+}
+
+.secondary-action {
+    border: 1px solid rgba(170, 191, 224, 0.34);
+    background: rgba(12, 27, 49, 0.65);
+    color: #d5e2f8;
+}
+
+.primary-action {
+    border: 0;
+    color: #ffffff;
+    background: linear-gradient(135deg, #0058bc 0%, #0070eb 100%);
+    box-shadow: 0 10px 22px rgba(0, 88, 188, 0.34);
+    padding: 10px 18px;
+}
+
+.primary-action .material-symbols-outlined {
+    width: 18px;
+    height: 18px;
+    font-size: 18px;
+}
+
+.secondary-action:hover {
+    background: rgba(20, 39, 66, 0.82);
+}
+
+.primary-action:hover {
+    box-shadow: 0 12px 24px rgba(0, 88, 188, 0.4);
+    transform: translateY(-1px);
+}
+
+.secondary-action,
+.primary-action {
+    transition: transform 0.15s ease, box-shadow 0.2s ease, background-color 0.2s ease;
+}
+
+@media (max-width: 980px) {
+    .war-room-page {
+        flex-direction: column;
+    }
+
+    .war-room-sidebar {
+        position: static;
+        width: 100%;
+        min-width: 0;
+        border-right: 0;
+        border-bottom: 1px solid #e5e9f1;
+        box-shadow: none;
+    }
+
+    .sidebar-user-block {
+        margin-top: 8px;
+    }
+
+    .war-room-main {
+        width: 100%;
+        margin-left: 0;
+        padding: 22px 16px;
+    }
+
+    .war-room-title {
+        font-size: 34px;
+    }
+
+    .debate-panel-header {
+        flex-direction: column;
+    }
+
+    .debate-status-card {
+        width: 100%;
+    }
+}
+
+@media (max-width: 560px) {
+    .war-room-title {
+        font-size: 30px;
+    }
+
+    .war-room-subtitle {
+        font-size: 14px;
+    }
+
+    .debate-panel {
+        padding: 16px;
+        border-radius: 24px;
+    }
+
+    .debate-panel-title {
+        font-size: 22px;
+    }
+
+    .agent-card {
+        padding: 12px;
+    }
+
+    .agent-top-row {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .debate-actions {
+        flex-direction: column;
+    }
+
+    .secondary-action,
+    .primary-action {
+        width: 100%;
+    }
+}
