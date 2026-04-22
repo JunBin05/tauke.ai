@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import fitz
 import pandas as pd
 import zhipuai
+import concurrent
 from dotenv import find_dotenv, load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -1016,18 +1017,16 @@ def _strategist_action_plan_prompt(
     diagnostic_json: Dict[str, Any],
     boss_answers: str,
     final_approved_theory: str,
+    external_signals: Dict[str, Any], # 👈 NEW: Add this parameter
 ) -> Tuple[str, str]:
     system_prompt = (
         "You are an elite F&B Business Strategist. You have just read the Final Theory regarding why this business's revenue shifted. "
-        "You also have their 12-point internal data patterns and their merchant profile. "
+        "You also have their 12-point internal data patterns, their merchant profile, and real-world external signals. "
         "Your task is to generate the 'Top 3 Strategic Action Plans' for the Boss to execute immediately.\n\n"
         "Strict Rules:\n\n"
         "No Generic Advice: Do NOT say 'Run a social media campaign' or 'Offer a discount.'\n\n"
-        "Hyper-Specific: You must name specific items from their data (e.g., 'Kopi C Ais', 'Nasi Lemak Ayam'), specify exact times of day "
-        "(e.g., 'Target the 2 PM - 6 PM Afternoon slump'), and suggest specific price points or bundle strategies based on their "
-        "Average Order Value (AOV) and Units Per Transaction (UPT).\n\n"
-        "Leverage Strengths: If a specific item or time block grew (e.g., 'Evening sales grew 5%'), at least one suggestion must focus "
-        "on accelerating that growth, not just fixing the drops.\n\n"
+        "Hyper-Specific: You must name specific items from their data... and suggest specific price points or bundle strategies...\n\n"
+        "Context Aware: You MUST factor in the external signals (weather, events, competitors) when designing these strategies.\n\n"
         "Format: Output the response as 3 distinct, bolded Action Items, each followed by a short paragraph explaining the exact 'Why' "
         "and 'How' based strictly on the data."
     )
@@ -1035,6 +1034,8 @@ def _strategist_action_plan_prompt(
         f"Merchant profile:\n{merchant_profile}\n\n"
         "12-point diagnostic JSON:\n"
         f"{json.dumps(diagnostic_json, indent=2)}\n\n"
+        "External Signals (Weather, Events, Competitors):\n" # 👈 NEW: Injecting the data
+        f"{json.dumps(external_signals, indent=2)}\n\n"
         "Boss answers:\n"
         f"{boss_answers}\n\n"
         "Final approved theory:\n"
@@ -1246,6 +1247,11 @@ def boardroom_continue(payload: BoardroomContinueRequest) -> Dict[str, Any]:
             )
             strategist_action_plan = _call_text_llm(llm_client, strategist_sys, strategist_usr, temperature=0.2)
 
+            supabase.table("monthly_summaries").update({
+                "boss_context": boss_answers,
+                "approved_theory": final_approved_theory
+            }).eq("merchant_id", merchant_id).eq("report_month", target_month).execute()
+
         return {
             "merchant_id": merchant_id,
             "target_month": target_month,
@@ -1261,6 +1267,79 @@ def boardroom_continue(payload: BoardroomContinueRequest) -> Dict[str, Any]:
         raise
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Boardroom continue failed: {exc}") from exc
+    
+class BoardroomDebateRequest(BaseModel):
+    merchant_id: str = Field(min_length=1)
+    target_month: str = Field(min_length=7)
+    proposed_strategies: str = Field(min_length=1)
+    merchant_profile: str = Field(default="")
+    external_signals: Dict[str, Any] = Field(default_factory=dict)
+    
+    # 👇 NEW: Catching the Internal Signals!
+    diagnostic_patterns: Dict[str, Any] = Field(default_factory=dict)
+    approved_theory: str = Field(default="")
+
+@app.post("/boardroom/debate")
+def boardroom_debate(payload: BoardroomDebateRequest) -> Dict[str, Any]:
+    try:
+        llm_client = get_zhipu_client()
+        user_prompt = (
+            f"--- BUSINESS CONTEXT ---\n"
+            f"Merchant Profile: {payload.merchant_profile}\n\n"
+            
+            f"--- INTERNAL SIGNALS ---\n"
+            f"Diagnostic Data: {json.dumps(payload.diagnostic_patterns, indent=2)}\n"
+            f"Approved Business Theory (includes Boss's input): {payload.approved_theory}\n\n"
+            
+            f"--- EXTERNAL SIGNALS ---\n"
+            f"Real-World Data (Weather, Events, Competitors):\n"
+            f"{json.dumps(payload.external_signals, indent=2)}\n\n"
+            
+            f"--- THE TASK ---\n"
+            f"Here are the 3 proposed strategies to analyze:\n{payload.proposed_strategies}"
+        )
+        
+        # 1. Define the 3 distinct Agent personas
+        cmo_sys = "You are the CMO (Growth Hacker). Briefly analyze these 3 strategies. Which one drives the most traffic? Point out the marketing pros and cons. Keep it conversational like a chat message (2-3 sentences)."
+        coo_sys = "You are the COO (Kitchen Operations). Briefly analyze these 3 strategies. Which one breaks kitchen flow or staff capacity? Point out the logistical pros and cons. Keep it conversational like a chat message (2-3 sentences)."
+        cfo_sys = "You are the CFO (Risk Manager). Briefly analyze these 3 strategies. Which one ruins our profit margins? Point out the financial pros and cons. Keep it conversational like a chat message (2-3 sentences)."
+
+        # 2. Run the 3 Agents IN PARALLEL (Massive speed boost!)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+            future_cmo = executor.submit(_call_text_llm, llm_client, cmo_sys, user_prompt, 0.4)
+            future_coo = executor.submit(_call_text_llm, llm_client, coo_sys, user_prompt, 0.4)
+            future_cfo = executor.submit(_call_text_llm, llm_client, cfo_sys, user_prompt, 0.4)
+            
+            cmo_text = future_cmo.result()
+            coo_text = future_coo.result()
+            cfo_text = future_cfo.result()
+
+        # 3. The "Final Boss" Synthesis
+        boss_sys = (
+            "You are the CEO. Read your executives' opinions on the 3 strategies. "
+            "You must select ONE final strategy to execute that perfectly balances growth, operations, and finance. "
+            "Write your final decision clearly and state why you chose it over the others."
+        )
+        boss_usr = f"CMO says:\n{cmo_text}\n\nCOO says:\n{coo_text}\n\nCFO says:\n{cfo_text}\n\nWhat is your final decision?"
+        
+        boss_text = _call_text_llm(llm_client, boss_sys, boss_usr, 0.2)
+
+        # 4. Stitch it together into the "Chat Bubble" JSON array for Next.js!
+        # Notice we don't need dangerous Regex anymore; we control the JSON directly!
+        debate_script = [
+            {"speaker": "CMO", "text": cmo_text},
+            {"speaker": "COO", "text": coo_text},
+            {"speaker": "CFO", "text": cfo_text},
+            {"speaker": "FINAL DECISION", "text": boss_text}
+        ]
+        
+        return {
+            "status": "success",
+            "debate_script": debate_script
+        }
+        
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Parallel debate generation failed: {exc}") from exc
 
 
 if __name__ == "__main__":
