@@ -78,8 +78,7 @@ class SetupProfileRequest(BaseModel):
 class SignupRequest(BaseModel):
     email: str
     password: str
-    name: str          
-    shop_type: str     
+    business_name: str    
 
 class LoginRequest(BaseModel):
     email: str
@@ -87,8 +86,7 @@ class LoginRequest(BaseModel):
     
 class GoogleSyncRequest(BaseModel):
     access_token: str
-    name: str          
-    shop_type: str     
+    name: str            
 
 class LocationUpdateRequest(BaseModel):
     merchant_id: str
@@ -112,7 +110,7 @@ app = FastAPI(title="Vision Financial Upload Service", version="2.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:5173", "http://127.0.0.1:5173"],
     allow_origin_regex=r"https?://(localhost|127\.0\.0\.1):\d+",
     allow_credentials=True,
     allow_methods=["*"],
@@ -1444,12 +1442,22 @@ def healthcheck() -> Dict[str, str]:
 async def signup(req: SignupRequest):
     supabase = get_supabase_client()
     try:
+        # 1. Create the user in Supabase Auth
         auth_response = supabase.auth.sign_up({"email": req.email, "password": req.password})
+        
         if auth_response.user:
             user_id = auth_response.user.id
-            merchant_data = {"owner_id": user_id, "name": req.name, "type": req.shop_type}
+            
+            # 2. Insert into your merchants table
+            merchant_data = {
+                "owner_id": user_id, 
+                "name": req.business_name # Maps to the "name" column in your schema
+                # We leave "type" out, so it defaults to null per your schema
+            }
             supabase.table("merchants").insert(merchant_data).execute()
+            
             return {"status": "success", "owner_id": user_id}
+            
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
@@ -1476,14 +1484,32 @@ async def sync_google_profile(req: GoogleSyncRequest):
             return {"status": "error", "message": "Invalid access token"}
 
         user_id = user_response.user.id
+        
+        # 1. Check if the shop exists
         existing_shop = supabase.table("merchants").select("*").eq("owner_id", user_id).execute()
         
         if existing_shop.data:
-            return {"status": "success", "message": "Welcome back!", "owner_id": user_id}
+            shop = existing_shop.data[0]
+            # Check if they have filled out their target audience yet
+            is_complete = bool(shop.get("target_audience"))
+            
+            return {
+                "status": "success", 
+                "message": "Welcome back!", 
+                "owner_id": user_id, 
+                "profile_complete": is_complete # 👈 SMART FLAG
+            }
 
-        merchant_data = {"owner_id": user_id, "name": req.name, "type": req.shop_type}
+        # 2. If no shop exists, CREATE IT NOW with their Google Name
+        merchant_data = {"owner_id": user_id, "name": req.name}
         supabase.table("merchants").insert(merchant_data).execute()
-        return {"status": "success", "message": "Google profile linked!", "owner_id": user_id}
+        
+        return {
+            "status": "success", 
+            "message": "Shop created!", 
+            "owner_id": user_id, 
+            "profile_complete": False # 👈 They definitely need to configure it
+        }
     except Exception as e:
         return {"status": "error", "message": f"Google sync failed: {e}"}
 
