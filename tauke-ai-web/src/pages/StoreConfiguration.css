@@ -7,6 +7,7 @@
   font-family: 'Inter', sans-serif;
   color: #1a1c1d;
   display: flex;
+  padding-left: 280px; /* ADD THIS: Offsets the fixed sidebar */
 }
 
 /* --- Add these to StoreConfiguration.css --- */
@@ -135,6 +136,7 @@
   flex: 1;
   padding: 48px 64px;
   max-width: 1200px;
+  margin: 0 auto; /* ADD THIS: Centers the content on wide screens */
 }
 
 .sc-title {
@@ -291,7 +293,8 @@ select.sc-input:focus {
 
 
 @media (max-width: 768px) {
+  .sc-page { padding-left: 0; } /* ADD THIS LINE */
   .sc-sidebar { display: none; }
-  .sc-main { margin-left: 0; padding: 24px; }
+  .sc-main { margin: 0 auto; padding: 24px; }
   .sc-grid { grid-template-columns: 1fr; }
 }

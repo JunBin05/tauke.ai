@@ -4,6 +4,8 @@ import io
 import json
 import os
 import re
+import random
+import json
 import requests
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
@@ -112,8 +114,8 @@ class DetectiveCardsRequest(BaseModel):
 
 class GenerateRoadmapRequest(BaseModel):
     merchant_id: str = Field(min_length=1)
-    target_month: str = Field(min_length=7)
-    source: str = Field(min_length=1, pattern=r"^(BOARDROOM|SANDBOX)$")
+    target_month: Optional[str] = None
+    source: str = Field(min_length=1, pattern=r"^(BOARDROOM|SANDBOX|SIMULATION)$")
     strategy_text: str = Field(...) # The chosen idea
     justification: str = Field(...) # Why the AI chose it (e.g., the profit boost reasoning)
     external_signals: Dict[str, Any] = Field(default_factory=dict)
@@ -2542,15 +2544,29 @@ def generate_roadmap(payload: GenerateRoadmapRequest) -> Dict[str, Any]:
     try:
         supabase = get_supabase_client()
         llm_client = get_zhipu_client()
-        target_month = _normalize_report_month(payload.target_month)
+        target_month: Optional[str] = None
+        if isinstance(payload.target_month, str) and payload.target_month.strip():
+            target_month = _normalize_report_month(payload.target_month)
+        elif payload.source in {"BOARDROOM", "SANDBOX"}:
+            raise HTTPException(status_code=400, detail="target_month is required for BOARDROOM/SANDBOX roadmap generation")
 
         financial_trend = payload.financial_trend if isinstance(payload.financial_trend, dict) else {}
-        if not financial_trend:
+        if not financial_trend and target_month:
             financial_trend = _fetch_financial_trend(supabase, payload.merchant_id, target_month)
+        elif not financial_trend:
+            financial_trend = {
+                "mode": "simulation_only",
+                "note": "No target_month provided; using simulation insights supplied by caller.",
+            }
 
         diagnostic_patterns = payload.diagnostic_patterns if isinstance(payload.diagnostic_patterns, dict) else {}
-        if not diagnostic_patterns:
+        if not diagnostic_patterns and target_month:
             diagnostic_patterns = _fetch_diagnostic_patterns(supabase, payload.merchant_id, target_month)
+        elif not diagnostic_patterns:
+            diagnostic_patterns = {
+                "mode": "simulation_only",
+                "note": "No month-based diagnostics available; roadmap grounded on strategy, justification, and provided insights.",
+            }
 
         combined_financial_context = {
             "financial_trend": financial_trend,
@@ -2602,7 +2618,7 @@ def generate_roadmap(payload: GenerateRoadmapRequest) -> Dict[str, Any]:
         roadmap_data = _normalize_roadmap_payload(roadmap_data)
 
         # Save to Database (Optional: Save it so the Boss can view it later)
-        if payload.source == "BOARDROOM":
+        if payload.source == "BOARDROOM" and target_month:
             supabase.table("monthly_summaries").update({
                 "action_plan": json.dumps(roadmap_data) # Save the structured JSON
             }).eq("merchant_id", payload.merchant_id).eq("report_month", target_month).execute()
@@ -3001,53 +3017,112 @@ def run_swarm_simulation(payload: SwarmSimulationRequest):
                 "foot_traffic": {"data": {"live_intensity": 50}} # Safe default
             }
 
-        # 5. LEAN MICROFISH PROMPT — 1 LLM call simulates all customer types
+        import random
+
+        weather_raw = external_signals.get("weather", {}).get("data", {})
+        traffic_raw = external_signals.get("traffic", {}).get("data", {})
+        foot_raw = external_signals.get("foot_traffic", {}).get("data", {})
+        places_raw = (external_signals.get("places") or {}).get("data", {})
+
+        # ---------------------------------------------------------
+        # 5. BUILD MICRO-COHORTS (The Persona Matrix)
+        # ---------------------------------------------------------
+        PERSONA_MATRIX = {
+            "Students": [
+                {"type": "Broke Student", "trait": "Very price sensitive"},
+                {"type": "Rich Student", "trait": "Wants premium aesthetic"},
+                {"type": "Stressed Student", "trait": "Needs fast + caffeine"},
+                {"type": "Gym Student", "trait": "Cares about protein"},
+            ],
+            "Office Workers": [
+                {"type": "Rushed Worker", "trait": "Needs under 5 min"},
+                {"type": "Executive", "trait": "High spending power"},
+                {"type": "Intern", "trait": "Low budget"},
+                {"type": "Health Exec", "trait": "Avoids unhealthy food"},
+            ],
+            "Families": [
+                {"type": "Exhausted Parent", "trait": "Just wants kids to eat"},
+                {"type": "Big Gathering", "trait": "Looking for sharing platters"}
+            ],
+            "General": [
+                {"type": "Impulse Buyer", "trait": "Easily persuaded"},
+                {"type": "Skeptic", "trait": "Hard to convince"},
+                {"type": "Loyal Regular", "trait": "Likely to support"},
+            ]
+        }
+
+        audience_dist = merchant_data.get("target_audience", {})
+        if not audience_dist:
+            audience_dist = {"Students": 40, "Office Workers": 40, "General": 20}
+
+        live_intensity = foot_raw.get("live_intensity", 50) if isinstance(foot_raw, dict) else 50
+        target_agent_count = max(5, min(100, int(live_intensity)))
+
+        micro_cohorts = []
+        for segment, pct in audience_dist.items():
+            pct_val = float(pct) / 100.0
+            segment_total = max(1, int(round(target_agent_count * pct_val)))
+
+            personas = PERSONA_MATRIX.get(segment, PERSONA_MATRIX["General"])
+            per_persona = max(1, segment_total // len(personas))
+
+            for p in personas:
+                micro_cohorts.append({
+                    "cohort": p["type"],
+                    "segment": segment,
+                    "headcount": per_persona,
+                    "trait": p["trait"]
+                })
+
+        # Limit to avoid LLM overload (max 10 micro-cohorts)
+        micro_cohorts = micro_cohorts[:10]
+
+        # ---------------------------------------------------------
+        # 6. LEAN MICROFISH PROMPT (Updated with your instructions)
+        # ---------------------------------------------------------
         system_prompt = (
             "You are MicroFish, an F&B swarm-intelligence simulator. "
-            "Analyze the scenario using the merchant data and live signals. "
-            "Return ONLY valid JSON (no markdown) with these keys:\n"
+            "Analyze the scenario using the merchant data, live signals, and the provided micro-cohorts.\n\n"
+            "Task: Evaluate how the scenario affects the financials, operations, and EACH specific micro-cohort. "
+            "Return ONLY valid JSON (no markdown) with these exact keys:\n"
             "- simulation_summary: 2 sentences referencing the signal data\n"
             "- financial_analysis: {baseline_estimated_profit, projected_new_profit, profit_boost, final_verdict: PROCEED/AVOID}\n"
             "- operational_impact: {can_handle_traffic: bool, bottleneck_risk: Low/Moderate/High, operational_notes}\n"
-            "- swarm_behavior: array of audience segments [{segment, reaction, churn_risk: Low/Medium/High}]"
-
-            "CRITICAL INSTRUCTION:"
+            "- swarm_behavior: array evaluating EACH cohort [{cohort: string, decision: buy/pass, reaction: short reasoning}]\n\n"
+            "CRITICAL INSTRUCTION:\n"
             "1. You must mathematically evaluate the final projected profit.\n"
-            "2. If the projected profit is less than 0, you MUST output 'decision': 'Reject'. \n"
-            "3. Under NO circumstances should you approve or recommend a strategy that results in negative profit, regardless of qualitative benefits like brand exposure or customer acquisition."
+            "2. If projected profit is less than 0, output 'final_verdict': 'AVOID'.\n"
+            "3. Under NO circumstances should you approve a strategy that results in negative profit."
         )
 
-        # Build compact context
         fin_trend = financial_context.get("financial_trend", {})
-        diag = financial_context.get("diagnostic_patterns", {})
         slim_fin = {
             "rev": (fin_trend.get("target_month") or {}).get("total_revenue", 0),
             "profit": (fin_trend.get("target_month") or {}).get("net_profit", 0),
             "avg_rev": (fin_trend.get("rolling_averages") or {}).get("avg_revenue", 0),
         }
 
-        # Scalar signals only
-        weather_raw = external_signals.get("weather", {}).get("data", {})
-        traffic_raw = external_signals.get("traffic", {}).get("data", {})
-        foot_raw = external_signals.get("foot_traffic", {}).get("data", {})
-        places_raw = (external_signals.get("places") or {}).get("data", {})
         sigs = {
             "weather": f"{weather_raw.get('condition', 'N/A')}, {weather_raw.get('temp_c', weather_raw.get('temp', 'N/A'))}°C" if isinstance(weather_raw, dict) else "N/A",
             "traffic": traffic_raw.get("congestion_level", "N/A") if isinstance(traffic_raw, dict) else "N/A",
-            "foot_traffic": foot_raw.get("live_intensity", 50) if isinstance(foot_raw, dict) else 50,
+            "foot_traffic": live_intensity,
             "competitors": places_raw.get("nearby_food_venue_count", 0) if isinstance(places_raw, dict) else 0,
         }
 
         user_prompt = (
             f"Scenario: \"{payload.scenario_prompt}\"\n"
-            f"Shop: {merchant_data.get('type')} | {merchant_data.get('pricing_tier')} | Hours: {merchant_data.get('operating_hours')}\n"
-            f"Audience: {json.dumps(merchant_data.get('target_audience', {}))}\n"
+            f"Shop: {merchant_data.get('type')} | Hours: {merchant_data.get('operating_hours')}\n"
             f"Financials: {json.dumps(slim_fin)}\n"
-            f"Signals: {json.dumps(sigs)}\n"
+            f"Signals: {json.dumps(sigs)}\n\n"
+            f"You will receive a list of micro-cohorts representing groups of people.\n"
+            f"Each cohort includes: cohort name, headcount, and behavioral trait.\n"
+            f"Micro-Cohorts to Evaluate:\n{json.dumps(micro_cohorts)}\n\n"
             f"JSON only."
         )
 
-        # 6. Call LLM — with deterministic local fallback if provider returns empty output
+        # ---------------------------------------------------------
+        # 7. CALL LLM 
+        # ---------------------------------------------------------
         engine = "ilmu"
         fallback_reason = ""
         try:
@@ -3059,39 +3134,64 @@ def run_swarm_simulation(payload: SwarmSimulationRequest):
             print(f"[Swarm Fallback] {fallback_reason}")
             simulation_data = _build_local_swarm_fallback(payload.scenario_prompt, slim_fin, sigs, merchant_data)
 
-        # 7. Sanity-check the verdict — LLM sometimes says PROCEED despite negative financials
+        # Sanity-check the verdict
         financials = simulation_data.get("financial_analysis", {})
         if isinstance(financials, dict):
             profit_boost = _to_float(financials.get("profit_boost"), 0.0)
             llm_verdict = str(financials.get("final_verdict", "")).strip().upper()
-            # Override: can't PROCEED if the scenario loses money
             if profit_boost < 0 and llm_verdict == "PROCEED":
                 financials["final_verdict"] = "AVOID"
-                print(f"[Verdict Override] LLM said PROCEED but profit_boost={profit_boost:.2f} — overriding to AVOID")
             simulation_data["financial_analysis"] = financials
 
-        # 8. Build synthetic agent dots from valid swarm_behavior segments only
+        # ---------------------------------------------------------
+        # 8. UNPACK COHORTS INTO REALISTIC INDIVIDUAL AGENTS
+        # ---------------------------------------------------------
         swarm_behavior = simulation_data.get("swarm_behavior", [])
         if not isinstance(swarm_behavior, list):
             swarm_behavior = []
 
-        # Filter out empty/invalid segments before building agents
-        valid_segments = [
-            seg for seg in swarm_behavior
-            if isinstance(seg, dict) and (seg.get("segment") or seg.get("reaction"))
-        ]
+        # Map LLM results by cohort name for easy lookup
+        cohort_results = {
+            str(c.get("cohort", "")): c for c in swarm_behavior if isinstance(c, dict)
+        }
 
         synthetic_agents = []
-        for i, seg in enumerate(valid_segments):
-            churn = str(seg.get("churn_risk", "")).lower()
-            decision = "pass" if churn == "high" else "buy"
-            synthetic_agents.append({
-                "id": i + 1,
-                "role": seg.get("segment", f"Segment {i+1}"),
-                "trait": seg.get("churn_risk", "Medium"),
-                "decision": decision,
-                "reason": seg.get("reaction", ""),
-            })
+        agent_id = 1
+
+        for cohort in micro_cohorts:
+            cohort_name = cohort["cohort"]
+            segment = cohort["segment"]
+            count = cohort["headcount"]
+
+            llm_eval = cohort_results.get(cohort_name, {})
+            
+            base_decision = str(llm_eval.get("decision", "buy")).strip().lower()
+            if base_decision not in ["buy", "pass"]:
+                base_decision = "pass"
+                
+            base_reason = llm_eval.get("reaction", f"Reacting based on {cohort['trait']}")
+
+            for i in range(count):
+                decision = base_decision
+
+                # MICRO VARIATION: Even within a cohort, people are unpredictable
+                if decision == "buy" and i % 7 == 0:
+                    decision = "pass"
+                elif decision == "pass" and i % 5 == 0:
+                    decision = "buy"
+
+                synthetic_agents.append({
+                    "id": agent_id,
+                    "segment": segment,      # e.g., "Students"
+                    "role": cohort_name,     # e.g., "Broke Student"
+                    "trait": cohort["trait"],# e.g., "Very price sensitive"
+                    "decision": decision,
+                    "reason": base_reason
+                })
+                agent_id += 1
+
+        # Shuffle so the Live Agent Feed UI looks like a natural stream of people
+        random.shuffle(synthetic_agents)
 
         total_buy = sum(1 for a in synthetic_agents if a["decision"] == "buy")
         total_pass = len(synthetic_agents) - total_buy

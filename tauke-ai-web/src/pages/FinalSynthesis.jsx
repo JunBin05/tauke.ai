@@ -1,172 +1,329 @@
-import { useState, useEffect } from "react";
-import { NavLink, useNavigate } from "react-router-dom";
-import "./FinalSynthesis.css";
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
 
-const navItems = [
-  { label: "Store Setup", icon: "storefront", to: "/store-configuration" },
-  { label: "Data Sync", icon: "sync", to: "/data-sync" },
-  { label: "Analysis", icon: "insights", to: "/detective-analysis" },
-  { label: "Clarification", icon: "forum", to: "/supervisor-clarification" },
-  { label: "War Room", icon: "groups", to: "/ai-debate" },
-  { label: "Strategy Synthesis", icon: "hub", to: "/final-synthesis", active: true }
-];
+import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom'; // Add this line
+import { motion, AnimatePresence } from 'framer-motion';
+import { 
+  Rocket, 
+  Shield, 
+  ArrowLeftRight, 
+  Filter, 
+  Download,
+  X
+} from 'lucide-react';
 
-// Fallback content — shown if no debate data exists in localStorage
-const FALLBACK_WINNER = {
-  role: "Consensus",
-  strategy: "Targeted Value Bundle With Guardrailed Promotions",
-  argument_for:
-    "It captures demand sensitivity without triggering broad discount dependency. The model favors this route because it balances conversion lift with controlled downside risk across cashflow, operational load, and margin stability.",
-  argument_against:
-    "Expected to improve weekly transaction momentum while maintaining margin discipline. Forecast indicates healthier recovery velocity versus full price-match tactics.",
-  projected_profit_impact: "+RM 1,200 est."
+import './FinalSynthesis.css';
+
+const Modal = ({ isOpen, onClose, onConfirm, title, children }) => {
+  return (
+    <AnimatePresence>
+      {isOpen && (
+        <div className="modal-overlay" onClick={onClose}>
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95, y: 20 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: 20 }}
+            transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+            className="modal-card"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-body">
+              <div className="modal-header">
+                <h3 className="modal-title">{title}</h3>
+                <button onClick={onConfirm} className="modal-close">
+                  <X size={24} />
+                </button>
+              </div>
+              <div className="modal-text">
+                {children}
+              </div>
+              <div className="modal-footer">
+                {/* Change onClose to onConfirm here! */}
+                <button onClick={onConfirm} className="btn-modal">
+                  Acknowledge & Continue
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        </div>
+      )}
+    </AnimatePresence>
+  );
 };
 
-const FALLBACK_SUPPORTING_CARDS = [
-  {
-    title: "Why not price match",
-    copy: "Direct matching drives fast volume but compresses gross margin beyond the threshold needed for stable weekly cashflow.",
-    badge: "Margin Safety"
-  },
-  {
-    title: "Expected impact",
-    copy: "Projected +9% order recovery in 4 to 6 weeks with healthier contribution margin than broad discount-led alternatives.",
-    badge: "Balanced Growth"
-  },
-  {
-    title: "Operational fit",
-    copy: "The rollout can be executed with current staffing and supplier cadence, reducing implementation risk during peak periods.",
-    badge: "Execution Ready"
-  }
-];
+const StrategyCard = ({ strategy, onExecute }) => {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={{ once: true }}
+      whileHover={{ y: -5 }}
+      className={`strategy-card ${strategy.recommended ? 'recommended' : ''}`}
+    >
+      {strategy.recommended && (
+        <div className="recommended-badge">Recommended</div>
+      )}
+      
+      <div className="card-header">
+        <div className="icon-box" style={{ backgroundColor: strategy.bgColor }}>
+          <div style={{ color: strategy.accentColor }}>
+            {strategy.icon}
+          </div>
+        </div>
+        <span className="risk-tag" style={{ color: strategy.accentColor, backgroundColor: strategy.bgColor }}>
+          {strategy.riskLevel}
+        </span>
+      </div>
 
-export default function FinalSynthesis() {
-  const navigate = useNavigate();
+      <h3 className="card-title">{strategy.title}</h3>
+      <p className="card-description">{strategy.description}</p>
+      
+      <div className="card-footer">
+        <span>Est. Growth</span>
+        <span>{strategy.growth}</span>
+      </div>
 
-  // ── Read what AIDebate saved into localStorage ──────────────────────────
-  const [winner, setWinner] = useState(null);
-  const [strategies, setStrategies] = useState([]);
+      <button 
+        onClick={() => onExecute(strategy)}
+        className={`btn-execute ${strategy.recommended ? 'premium' : 'standard'}`}
+      >
+        Execute Campaign
+      </button>
+    </motion.div>
+  );
+};
 
-  useEffect(() => {
-    // Read the winning strategy that AIDebate.jsx saved
-    const savedWinner = localStorage.getItem("debate_winner");
-    const savedStrategies = localStorage.getItem("debate_strategies");
+export default function App() {
+  const navigate = useNavigate(); // Initialize navigation
 
-    if (savedWinner) {
-      try {
-        setWinner(JSON.parse(savedWinner));
-      } catch {
-        // If JSON is malformed, fall back to defaults
-        setWinner(FALLBACK_WINNER);
-      }
+  const [modalState, setModalState] = useState({
+    isOpen: false,
+    title: '',
+    content: null,
+    onConfirmAction: null // Add this line
+  });
+
+  // Update openModal to accept a third parameter
+  const openModal = (title, content, customConfirmAction = null) => {
+    setModalState({ isOpen: true, title, content, onConfirmAction: customConfirmAction });
+  };
+
+  const closeModal = () => {
+    setModalState(prev => ({ ...prev, isOpen: false }));
+  };
+
+  const strategies = [
+    {
+      id: 'aggressive',
+      title: 'Aggressive',
+      description: 'Front-load capital for market dominance. Prioritizes rapid user acquisition over short-term burn rates.',
+      growth: '+142%',
+      riskLevel: 'HIGH RISK',
+      icon: <Rocket size={24} fill="currentColor" />,
+      accentColor: '#dc2626',
+      bgColor: '#fef2f2'
+    },
+    {
+      id: 'hybrid',
+      title: 'Hybrid Pivot',
+      description: 'Shift focus to Enterprise-tier integrations while maintaining existing B2C stability. Balanced liquidity approach.',
+      growth: '+88%',
+      riskLevel: 'OPTIMIZED',
+      recommended: true,
+      icon: <ArrowLeftRight size={24} />,
+      accentColor: '#0058bc',
+      bgColor: '#eff6ff'
+    },
+    {
+      id: 'defensive',
+      title: 'Defensive',
+      description: 'Asset protection and yield optimization. Focuses on retention and infrastructure stability during volatility.',
+      growth: '+22%',
+      riskLevel: 'CONSERVATIVE',
+      icon: <Shield size={24} fill="currentColor" />,
+      accentColor: '#64748b',
+      bgColor: '#f1f5f9'
     }
+  ];
 
-    if (savedStrategies) {
-      try {
-        setStrategies(JSON.parse(savedStrategies));
-      } catch {
-        setStrategies([]);
-      }
-    }
-  }, []);
+  const handleConfirmAction = () => {
+    closeModal();
+    navigate('/campaign-roadmap'); 
+  };
 
-  // Use live data if available, otherwise use fallback
-  const displayWinner = winner ?? FALLBACK_WINNER;
-
-  // Build supporting cards from the LOSING strategies (the ones not chosen)
-  // These become the "why we didn't pick those" rationale cards
-  const supportingCards =
-    strategies.length > 1
-      ? strategies
-          .filter((s) => s.role !== displayWinner.role)
-          .slice(0, 3)
-          .map((s) => ({
-            title: `Why not: ${s.role}'s plan`,
-            copy: s.argument_against || s.copy || "Not selected due to risk profile.",
-            badge: s.stance || s.role
-          }))
-      : FALLBACK_SUPPORTING_CARDS;
-
-  // ── On "Continue to Roadmap" — save the chosen strategy ────────────────
-  const handleContinue = () => {
-    localStorage.setItem("chosen_strategy", JSON.stringify(displayWinner));
-    navigate("/campaign-roadmap");
+  const handleExecute = (s) => {
+    openModal(
+      `Executing ${s.title} Campaign`,
+      <>
+        <p>You are about to initiate the <strong>{s.title}</strong> market movement.</p>
+        <div className="modal-quote">
+          "Simulating 1.2M market iterations... Alignment confirmed."
+        </div>
+        <p>This path focuses on <span style={{ fontWeight: 600 }}>{s.growth} growth</span> with a 
+        <span style={{ color: s.accentColor, fontWeight: 700 }}> {s.riskLevel}</span> risk profile.</p>
+      </>,
+      handleConfirmAction // Add this here!
+    );
   };
 
   return (
-    <div className="synthesis-page">
-      <main className="synthesis-main">
-        <div className="synthesis-shell">
-          <header className="synthesis-header">
-            <p className="synthesis-step">STEP 7 / FINAL SYNTHESIS</p>
-            <h2 className="synthesis-title">Final Synthesis</h2>
-            <p className="synthesis-subtitle">
-              The system is now presenting the safest and most suitable final recommendation based on
-              cross-agent consensus, business constraints, and expected outcome quality.
-            </p>
-          </header>
+    <div className="app-container">
+      <main className="dashboard-main">
+        <motion.div 
+          initial={{ opacity: 0, x: -20 }}
+          animate={{ opacity: 1, x: 0 }}
+          className="hero-header"
+        >
+          <button 
+            onClick={() => openModal('Synthesis & Execution', 'This module synthesizes 1.2M market simulations into actionable strategic vectors.')}
+            className="text-label-pill"
+          >
+            Synthesis & Execution
+          </button>
+          <h2 className="hero-title">Strategic Vectors</h2>
+          <p className="hero-description">
+            Tauke.AI has simulated 1.2M market iterations. Review the high-probability paths below to finalize your Q4 market positioning.
+          </p>
+        </motion.div>
 
-          <section className="consensus-card" aria-label="Final recommendation">
-            <div className="consensus-head">
-              <p className="consensus-kicker">Consensus Recommendation</p>
-              <span className="consensus-pill">Highest confidence path</span>
+        <div className="strategy-grid">
+          {strategies.map((s) => (
+            <StrategyCard key={s.id} strategy={s} onExecute={handleExecute} />
+          ))}
+        </div>
+
+        <motion.div 
+          initial={{ opacity: 0, y: 30 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true }}
+          className="analysis-container"
+        >
+          <div className="analysis-header">
+            <h3 className="analysis-title">Comparative Analysis</h3>
+            <div className="tool-buttons">
+              <button 
+                onClick={() => openModal('Filters', 'Advanced filtering options for comparative metrics will appear here.')}
+                className="btn-tool"
+              >
+                <Filter size={20} />
+              </button>
+              <button 
+                onClick={() => openModal('Download Report', 'Preparing your strategic PDF export... Total size: 4.2MB')}
+                className="btn-tool"
+              >
+                <Download size={20} />
+              </button>
             </div>
+          </div>
 
-            {/* ── Live winner title from AIDebate, fallback if not available ── */}
-            <h3 className="consensus-title">
-              {displayWinner.strategy}
-            </h3>
+          <div className="table-wrapper">
+            <table>
+              <thead>
+                <tr>
+                  <th>Metric</th>
+                  <th style={{ textAlign: 'center' }}>Aggressive</th>
+                  <th className="active" style={{ textAlign: 'center' }}>Hybrid Pivot</th>
+                  <th style={{ textAlign: 'center' }}>Defensive</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td className="row-label">Core Pros</td>
+                  <td className="cell-content" style={{ textAlign: 'center' }}>Total Market Cap Capture, Talent Drain</td>
+                  <td className="cell-content cell-active" style={{ textAlign: 'center' }}>Sustainable Unit Economics, Agility</td>
+                  <td className="cell-content" style={{ textAlign: 'center' }}>Max Dividend Yield, Low Burn</td>
+                </tr>
+                <tr>
+                  <td className="row-label">Risk Factors</td>
+                  <td className="cell-content" style={{ textAlign: 'center' }}>Cash Exhaustion &lt; 6 Months</td>
+                  <td className="cell-content cell-active" style={{ textAlign: 'center' }}>Operational Friction (Mid-Shift)</td>
+                  <td className="cell-content" style={{ textAlign: 'center' }}>Market Irrelevance in 24 Months</td>
+                </tr>
+                <tr>
+                  <td className="row-label">Resource Drain</td>
+                  <td>
+                    <div className="progress-track">
+                      <motion.div 
+                        initial={{ width: 0 }}
+                        whileInView={{ width: '100%' }}
+                        transition={{ duration: 1, delay: 0.2 }}
+                        className="progress-fill"
+                        style={{ backgroundColor: '#ef4444' }}
+                      />
+                    </div>
+                  </td>
+                  <td>
+                    <div className="progress-track">
+                      <motion.div 
+                        initial={{ width: 0 }}
+                        whileInView={{ width: '60%' }}
+                        transition={{ duration: 1, delay: 0.4 }}
+                        className="progress-fill"
+                        style={{ backgroundColor: '#0058bc' }}
+                      />
+                    </div>
+                  </td>
+                  <td>
+                    <div className="progress-track">
+                      <motion.div 
+                        initial={{ width: 0 }}
+                        whileInView={{ width: '25%' }}
+                        transition={{ duration: 1, delay: 0.6 }}
+                        className="progress-fill"
+                        style={{ backgroundColor: '#cbd5e1' }}
+                      />
+                    </div>
+                  </td>
+                </tr>
+                <tr>
+                  <td className="row-label">Probability of Success</td>
+                  <td className="prob-value">34%</td>
+                  <td className="prob-value prob-value-active">81%</td>
+                  <td className="prob-value">94%</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </motion.div>
 
-            <div className="consensus-grid">
-              <article className="consensus-block">
-                <h4>Why this is recommended</h4>
-                <p>{displayWinner.argument_for}</p>
-              </article>
-
-              <article className="consensus-block">
-                <h4>Business fit / expected impact</h4>
-                <p>
-                  {displayWinner.argument_against}
-                  {displayWinner.projected_profit_impact && (
-                    <strong style={{ display: "block", marginTop: "8px", color: "#006e28" }}>
-                      Projected impact: {displayWinner.projected_profit_impact}
-                    </strong>
-                  )}
-                </p>
-              </article>
-            </div>
-          </section>
-
-          {/* ── Supporting rationale cards (the rejected strategies) ── */}
-          <section className="support-grid" aria-label="Supporting rationale cards">
-            {supportingCards.map((card) => (
-              <article key={card.title} className="support-card">
-                <span className="support-badge">{card.badge}</span>
-                <h4>{card.title}</h4>
-                <p>{card.copy}</p>
-              </article>
-            ))}
-          </section>
-
-          <div className="synthesis-actions">
-            <button
-              type="button"
-              className="secondary-action"
-              onClick={() => navigate("/ai-debate")}
+        <footer className="dashboard-footer">
+          <div className="footer-links">
+            <span style={{ color: '#64748b' }}>© 2024 Tauke.AI Corp.</span>
+            <button 
+              onClick={() => openModal('Privacy Policy', 'Your data is encrypted with enterprise-grade AES-256.')}
+              className="footer-btn"
             >
-              Back to War Room
+              Privacy Policy
             </button>
-            <button
-              type="button"
-              className="primary-action"
-              onClick={handleContinue}
+            <button 
+              onClick={() => openModal('Compliance Hub', 'Tauke.AI maintains SOC2 Type II, HIPAA, and GDPR compliance.')}
+              className="footer-btn"
             >
-              <span>Continue to Roadmap</span>
-              <span className="material-symbols-outlined" aria-hidden="true">arrow_forward</span>
+              Compliance Hub
             </button>
           </div>
-        </div>
+          <div className="system-status">
+            <div className="status-pill">
+              <span className="status-dot"></span>
+              <span>System Live</span>
+            </div>
+            <span className="version-tag">v2.4.82-boutique</span>
+          </div>
+        </footer>
       </main>
+
+      <Modal 
+        isOpen={modalState.isOpen} 
+        onClose={closeModal} 
+        // Use the custom action if it exists, otherwise just close the modal
+        onConfirm={modalState.onConfirmAction ? modalState.onConfirmAction : closeModal} 
+        title={modalState.title}
+      >
+        {modalState.content}
+      </Modal>
     </div>
   );
 }
