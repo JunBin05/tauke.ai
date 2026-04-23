@@ -7,7 +7,7 @@ export default function LoadingPage() {
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
-      navigate("/store-configuration");
+      navigate("/supervisor-clarification");
     }, 2200);
 
     return () => {

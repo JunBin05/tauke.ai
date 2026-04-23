@@ -33,34 +33,6 @@ export default function FinalSynthesis() {
 
   return (
     <div className="synthesis-page">
-      <aside className="synthesis-sidebar" aria-label="Sidebar">
-        <div className="sidebar-brand-block">
-          <h1 className="sidebar-brand-title">Tauke.AI</h1>
-          <p className="sidebar-brand-subtitle">SME Intelligence</p>
-        </div>
-
-        <nav className="sidebar-nav" aria-label="Primary navigation">
-          {navItems.map((item) => (
-            <NavLink
-              key={item.label}
-              to={item.to}
-              className={({ isActive }) => `sidebar-nav-item${isActive || item.active ? " is-active" : ""}`}
-            >
-              <span className="material-symbols-outlined sidebar-nav-icon" aria-hidden="true">{item.icon}</span>
-              <span className="sidebar-nav-label">{item.label}</span>
-            </NavLink>
-          ))}
-        </nav>
-
-        <div className="sidebar-user-block">
-          <div className="sidebar-avatar" aria-hidden="true">A</div>
-          <div>
-            <p className="sidebar-user-name">Admin User</p>
-            <p className="sidebar-user-meta">Manage Account</p>
-          </div>
-        </div>
-      </aside>
-
       <main className="synthesis-main">
         <div className="synthesis-shell">
           <header className="synthesis-header">

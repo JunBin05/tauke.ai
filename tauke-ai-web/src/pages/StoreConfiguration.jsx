@@ -147,25 +147,6 @@ const geocoder = new window.google.maps.Geocoder();
 
   return (
     <div className="sc-page">
-      {/* Sidebar */}
-      <aside className="sc-sidebar">
-        <div className="sc-brand-header">
-          <div className="sc-logo-box"><LayoutDashboard size={24} /></div>
-          <div>
-            <h1 style={{fontSize: '18px', fontWeight: 900}}>Tauke.AI</h1>
-            <p style={{fontSize: '12px', color: '#717786'}}>SME Intelligence</p>
-          </div>
-        </div>
-        <nav style={{display: 'flex', flexDirection: 'column', gap: '8px'}}>
-          {MENU_ITEMS.map((item) => (
-            <button key={item.id} onClick={() => setActiveTab(item.id)} className={`sc-nav-btn ${activeTab === item.id ? 'active' : ''}`}>
-              <item.icon size={20} /> {item.label}
-            </button>
-          ))}
-        </nav>
-      </aside>
-
-      {/* Main Content */}
       <main className="sc-main">
         <header style={{marginBottom: '48px'}}>
           <span style={{background: '#6ffb85', color: '#006e28', padding: '4px 12px', borderRadius: '99px', fontSize: '12px', fontWeight: 'bold'}}>ONBOARDING MODULE</span>

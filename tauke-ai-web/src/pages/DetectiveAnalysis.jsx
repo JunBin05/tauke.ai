@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import './DetectiveAnalysis.css';
 import { 
   LayoutDashboard, 
@@ -128,6 +129,7 @@ const PerformanceSummaryList = ({ summary, month }) => (
 );
 
 export default function DetectiveAnalysis() {
+  const navigate = useNavigate();
   const [selectedMonth, setSelectedMonth] = useState(AVAILABLE_MONTHS[0]);
   const [intelligenceIndex, setIntelligenceIndex] = useState(0);
   const [isMonthDropdownOpen, setIsMonthDropdownOpen] = useState(false);
@@ -139,11 +141,58 @@ export default function DetectiveAnalysis() {
   const ownerId = localStorage.getItem("owner_id");
 
   useEffect(() => {
-    const interval = setInterval(() => {
-      setIntelligenceIndex((prev) => (prev + 1) % EXTERNAL_INTELLIGENCE.length);
-    }, 5000);
-    return () => clearInterval(interval);
-  }, []);
+    const fetchRealTrend = async () => {
+      // Don't even try to fetch if we don't have an ID
+      if (!ownerId) {
+        setIsLoadingChart(false);
+        return;
+      }
+      
+      setIsLoadingChart(true);
+      try {
+        const targetMonth = getApiMonth(selectedMonth);
+        const response = await fetch(`${API_BASE_URL}/boardroom/trend/${ownerId}/${targetMonth}`);
+        const data = await response.json();
+        
+        if (data.status === "success") {
+            // 1. Figure out how many days are in the selected month
+            const [monthName, yearName] = selectedMonth.split(" ");
+            const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+            const monthIndex = months.indexOf(monthName);
+            const daysInMonth = new Date(parseInt(yearName), monthIndex + 1, 0).getDate();
+
+            // 2. Create a blank template for the whole month with 0 revenue
+            const fullMonthData = Array.from({ length: daysInMonth }, (_, i) => ({
+              name: `${i + 1} ${monthName}`,
+              revenue: 0
+            }));
+
+            // 3. Merge the actual backend data into our blank template
+            if (data.trend_data && Array.isArray(data.trend_data)) {
+                data.trend_data.forEach(realDay => {
+                  // Find the matching day in our template (e.g., "1 Mar")
+                  const index = fullMonthData.findIndex(d => d.name === realDay.name);
+                  if (index !== -1) {
+                    fullMonthData[index].revenue = realDay.revenue;
+                  }
+                });
+            }
+
+            // 4. Set the padded data into the chart!
+            setChartData(fullMonthData);
+        } else {
+            setChartData([]); // Reset on failure
+        }
+      } catch (error) {
+        console.error("Failed to fetch real chart data:", error);
+        setChartData([]);
+      } finally {
+        setIsLoadingChart(false);
+      }
+    };
+
+    fetchRealTrend();
+  }, [selectedMonth, ownerId]);
 
   // 🚀 FIX 3: Bulletproof Month Translator
   const getApiMonth = (displayMonth) => {
@@ -191,28 +240,6 @@ export default function DetectiveAnalysis() {
 
   return (
     <div className="dashboard-container">
-      <aside className="sidebar">
-        <div className="sidebar-header">
-          <h1 className="sidebar-logo">Tauke.AI</h1>
-          <p className="sidebar-tagline">SME Intelligence</p>
-        </div>
-        
-        <nav className="sidebar-nav">
-          <SidebarItem icon={Users} label="Onboarding" />
-          <SidebarItem icon={RefreshCcw} label="Data Sync" />
-          <SidebarItem icon={LayoutDashboard} label="Analysis" active />
-          <SidebarItem icon={MessageSquare} label="Clarification" />
-          <SidebarItem icon={ShieldAlert} label="War Room" />
-        </nav>
-
-        <div style={{ padding: '0 16px' }}>
-          <button className="upgrade-btn">
-            <ArrowUpRight className="w-4 h-4" style={{ transform: 'rotate(45deg)' }} />
-            Upgrade Plan
-          </button>
-        </div>
-      </aside>
-
       <div className="main-content">
         <header className="top-app-bar">
           <div />
@@ -356,6 +383,22 @@ export default function DetectiveAnalysis() {
                 month={selectedMonth}
               />
             </div>
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '24px 0 8px 0' }}>
+            <button
+              onClick={() => navigate('/ai-debate')}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '8px',
+                padding: '12px 24px', borderRadius: '12px',
+                background: 'var(--primary, #0058bc)', color: '#fff',
+                border: 'none', fontSize: '15px', fontWeight: 700,
+                cursor: 'pointer'
+              }}
+            >
+              <span>Continue to War Room</span>
+              <span className="material-symbols-outlined" style={{ fontSize: '20px' }} aria-hidden="true">arrow_forward</span>
+            </button>
           </div>
         </main>
       </div>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   PlayCircle, 
@@ -6,7 +6,6 @@ import {
   ArrowUp, 
   Settings, 
   User, 
-  Bell, 
   CheckCircle, 
   Brain, 
   TrendingUp, 
@@ -15,7 +14,28 @@ import {
   Shield, 
   Store
 } from 'lucide-react';
+import { API_BASE_URL } from '../config';
 import './SwarmSimulation.css';
+
+const formatCurrency = (value) => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return 'RM 0';
+  }
+
+  return new Intl.NumberFormat('en-MY', {
+    style: 'currency',
+    currency: 'MYR',
+    maximumFractionDigits: 0
+  }).format(numeric);
+};
+
+const getFallbackTargetMonth = () => {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  return `${year}-${month}`;
+};
 
 // --- Components ---
 
@@ -75,6 +95,7 @@ const LandingPage = ({ onStart, value, onChange }) => {
               <motion.button 
                 whileHover={isActive ? { opacity: 0.9 } : {}}
                 whileTap={isActive ? { scale: 0.9 } : {}}
+                onClick={isActive ? onStart : undefined}
                 disabled={!isActive}
                 className={`btn-arrow ${isActive ? 'active' : 'disabled'}`}
               >
@@ -103,25 +124,40 @@ const LandingPage = ({ onStart, value, onChange }) => {
   );
 };
 
-const SimulationPage = ({ onComplete }) => {
-  const [progress, setProgress] = useState(0);
+const SimulationPage = ({ isRunning, errorMessage, onRetry, onBack, runId }) => {
+  const [progress, setProgress] = useState(8);
   const [isDecisionGreen, setIsDecisionGreen] = useState(null);
   const [showShopPulse, setShowShopPulse] = useState(false);
   const [animationStep, setAnimationStep] = useState(0); // 0: enter, 1: decide, 2: exit
 
   useEffect(() => {
-    const timer = setInterval(() => {
-      setProgress(p => {
-        if (p >= 100) {
-          clearInterval(timer);
-          setTimeout(onComplete, 1000);
-          return 100;
+    setProgress(8);
+  }, [runId]);
+
+  useEffect(() => {
+    if (!isRunning) {
+      return undefined;
+    }
+
+    const timer = window.setInterval(() => {
+      setProgress((current) => {
+        if (current >= 92) {
+          return 92;
         }
-        return p + 0.5;
+
+        const increment = 1 + Math.random() * 3;
+        return Math.min(current + increment, 92);
       });
-    }, 50);
-    return () => clearInterval(timer);
-  }, [onComplete]);
+    }, 450);
+
+    return () => window.clearInterval(timer);
+  }, [isRunning]);
+
+  useEffect(() => {
+    if (!isRunning && !errorMessage) {
+      setProgress(100);
+    }
+  }, [isRunning, errorMessage]);
 
   // Handle sequence
   useEffect(() => {
@@ -171,7 +207,22 @@ const SimulationPage = ({ onComplete }) => {
       <main className="sim-main">
         <div className="sim-status">
           <h1 className="status-title">INITIALIZING SIMULATION</h1>
-          <p className="status-subtitle">Analyzing queue dynamics... Please wait.</p>
+          <p className="status-subtitle">
+            {errorMessage
+              ? 'Simulation failed. Please retry.'
+              : isRunning
+                ? 'Running LLM swarm agents and financial checks...'
+                : 'Finalizing report...'}
+          </p>
+          {errorMessage && (
+            <div style={{ marginTop: '14px', display: 'flex', flexDirection: 'column', gap: '10px', alignItems: 'center' }}>
+              <p style={{ margin: 0, color: '#fda4af', fontSize: '0.9rem', maxWidth: '680px', textAlign: 'center' }}>{errorMessage}</p>
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <button type="button" className="btn-secondary" onClick={onBack}>Back</button>
+                <button type="button" className="btn-start active" onClick={onRetry}>Retry Simulation</button>
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="sim-canvas">
@@ -306,18 +357,67 @@ const SimulationPage = ({ onComplete }) => {
   );
 };
 
-const ResultsPage = ({ scenario }) => {
+const ResultsPage = ({ scenario, simulationResult, onRunAnother }) => {
+  const financials = simulationResult?.financials && typeof simulationResult.financials === 'object'
+    ? simulationResult.financials
+    : {};
+  const operations = simulationResult?.operations && typeof simulationResult.operations === 'object'
+    ? simulationResult.operations
+    : {};
+  const stats = simulationResult?.stats && typeof simulationResult.stats === 'object'
+    ? simulationResult.stats
+    : {};
+
+  const swarmBehavior = Array.isArray(simulationResult?.swarm_behavior)
+    ? simulationResult.swarm_behavior
+    : [];
+
+  const totalAgents = Number(stats.total_agents) || 0;
+  const totalBuy = Number(stats.total_buy) || 0;
+  const totalPass = Number(stats.total_pass) || 0;
+  const buyRatePercent = totalAgents > 0 ? Math.round((totalBuy / totalAgents) * 100) : 0;
+  const verdict = String(financials.final_verdict || '').trim().toUpperCase() === 'ABORT' ? 'ABORT' : 'PROCEED';
+  const verdictClass = verdict === 'ABORT' ? 'text-red' : 'text-green';
+  const verdictStroke = verdict === 'ABORT' ? '#ef4444' : 'var(--green-600)';
+
+  const baselineProfit = Number(financials.baseline_estimated_profit) || 0;
+  const projectedProfit = Number(financials.projected_new_profit) || 0;
+  const profitBoost = Number(financials.profit_boost) || projectedProfit - baselineProfit;
+
+  const canHandleTraffic = operations.can_handle_traffic === true;
+  const operationalRisk = operations.bottleneck_risk || 'Unknown';
+  const operationalNotes = operations.operational_notes || 'No operational notes returned by the model.';
+
+  const reasoningCards = swarmBehavior.slice(0, 3).map((item, index) => ({
+    num: String(index + 1).padStart(2, '0'),
+    title: item.segment || `Segment ${index + 1}`,
+    desc: item.reaction || item.churn_risk || 'No additional segment details were returned.'
+  }));
+
+  while (reasoningCards.length < 3) {
+    const index = reasoningCards.length + 1;
+    reasoningCards.push({
+      num: String(index).padStart(2, '0'),
+      title: `Segment ${index}`,
+      desc: 'Additional segment detail was not returned for this run.'
+    });
+  }
+
+  const profitDeltaPercent = baselineProfit === 0
+    ? 0
+    : Math.round((Math.abs(profitBoost) / Math.abs(baselineProfit)) * 100);
+
   return (
     <div className="results-page">
       <main className="results-container">
         <div className="results-header">
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
             <span className="results-id">Simulation ID: TK-8829-V2</span>
-            <h1 className="results-title">Simulation Results</h1>
-            <p className="results-scenario">{scenario || "Market Expansion Strategy: Southeast Asia Phase 1 Focus"}</p>
+            <h1 className="results-title">Final Swarm Report</h1>
+            <p className="results-scenario">{scenario || 'No scenario provided.'}</p>
           </motion.div>
           <div className="header-actions">
-            <button className="btn-secondary">Export Report</button>
+            <button className="btn-secondary" onClick={onRunAnother}>Run Another Scenario</button>
           </div>
         </div>
 
@@ -336,10 +436,10 @@ const ResultsPage = ({ scenario }) => {
                 AI Recommendation
               </div>
               <h2 className="verdict-main-text">
-                Verdict: <span className="text-green">Proceed</span>
+                Verdict: <span className={verdictClass}>{verdict}</span>
               </h2>
               <p className="verdict-secondary-text">
-                The simulation indicates an 89.4% probability of exceeding target ROI within the first 14 months of deployment.
+                {simulationResult?.summary || 'Simulation completed with no summary text.'}
               </p>
             </div>
             <div className="verdict-meter-side">
@@ -353,11 +453,11 @@ const ResultsPage = ({ scenario }) => {
                   />
                   <motion.circle 
                     initial={{ strokeDashoffset: 540 }}
-                    animate={{ strokeDashoffset: 540 * (1 - 0.89) }}
+                    animate={{ strokeDashoffset: 540 * (1 - Math.max(0, Math.min(buyRatePercent, 100)) / 100) }}
                     transition={{ duration: 1.5, ease: "easeOut", delay: 0.5 }}
                     cx="96" cy="96" r="86" 
                     fill="transparent" 
-                    stroke="var(--green-600)" 
+                    stroke={verdictStroke}
                     strokeWidth="10" 
                     strokeDasharray="540" 
                     strokeLinecap="round" 
@@ -370,9 +470,9 @@ const ResultsPage = ({ scenario }) => {
                     transition={{ delay: 1, duration: 0.5 }}
                     className="meter-percent"
                   >
-                    89%
+                    {buyRatePercent}%
                   </motion.span>
-                  <span className="meter-name">Confidence</span>
+                  <span className="meter-name">Buy Intent</span>
                 </div>
               </div>
             </div>
@@ -386,15 +486,11 @@ const ResultsPage = ({ scenario }) => {
                 <div className="card-icon-container">
                   <Brain size={24} />
                 </div>
-                <h3 className="card-title">Strategic Reasoning</h3>
+                <h3 className="card-title">Swarm Reasoning</h3>
               </div>
               <div className="reasoning-items">
-                {[
-                  { num: "01", title: "High Market Velocity Resilience", desc: "The model anticipates a surge in competitor response by Q3. However, current supply chain agility metrics suggest a 'first-mover' lock-in." },
-                  { num: "02", title: "Operational Impact Balancing", desc: "Unlike previous versions, V2 leverages a distributed logistics node architecture. This reduces single-point-of-failure exposure." },
-                  { num: "03", title: "Consumer Sentiment Tailwinds", desc: "Sentiment analysis shows a strong affinity for sustainable packaging, allowing for a 12% premium pricing structure." }
-                ].map((item, i) => (
-                  <div key={i} className="reasoning-item">
+                {reasoningCards.map((item) => (
+                  <div key={item.num} className="reasoning-item">
                     <div className="item-num">{item.num}</div>
                     <div className="item-content">
                       <h4 className="item-title">{item.title}</h4>
@@ -407,11 +503,29 @@ const ResultsPage = ({ scenario }) => {
 
             <div className="kpi-grid">
               {[
-                { label: "Growth Projection", val: "+42.8%", sub: "Estimated YoY Growth", color: "green", p: "42%" },
-                { label: "Risk Exposure", val: "Low", sub: "Volatility Index: 0.14", color: "blue", p: "14%" },
-                { label: "Capital Efficiency", val: "1.8x", sub: "Return per Dollar Spent", color: "blue", p: "75%" }
-              ].map((card, i) => (
-                <div key={i} className="kpi-card">
+                {
+                  label: 'Projected Profit',
+                  val: formatCurrency(projectedProfit),
+                  sub: `Baseline: ${formatCurrency(baselineProfit)}`,
+                  color: verdict === 'ABORT' ? 'blue' : 'green',
+                  p: `${Math.max(8, Math.min(100, buyRatePercent))}%`
+                },
+                {
+                  label: 'Profit Boost',
+                  val: `${profitBoost >= 0 ? '+' : ''}${formatCurrency(profitBoost)}`,
+                  sub: 'Scenario delta vs baseline',
+                  color: profitBoost >= 0 ? 'green' : 'blue',
+                  p: `${Math.max(10, Math.min(100, profitDeltaPercent))}%`
+                },
+                {
+                  label: 'Traffic Capacity',
+                  val: canHandleTraffic ? 'Stable' : 'Bottleneck Risk',
+                  sub: `Risk: ${operationalRisk}`,
+                  color: canHandleTraffic ? 'green' : 'blue',
+                  p: `${canHandleTraffic ? 84 : 42}%`
+                }
+              ].map((card) => (
+                <div key={card.label} className="kpi-card">
                   <div className="kpi-label">{card.label}</div>
                   <div className={`kpi-value text-${card.color}`}>{card.val}</div>
                   <div className="kpi-sub">{card.sub}</div>
@@ -424,7 +538,7 @@ const ResultsPage = ({ scenario }) => {
           </div>
 
           <div className="actions-column">
-            <h3 className="column-title">Recommended Actions</h3>
+            <h3 className="column-title">Operational Readout</h3>
             <div className="actions-list">
               <motion.div 
                 whileHover={{ scale: 1.02, x: 4 }}
@@ -434,9 +548,9 @@ const ResultsPage = ({ scenario }) => {
                 <div className="action-icon icon-green">
                   <TrendingUp size={24} />
                 </div>
-                <h4 className="action-label">Recommended Promotion</h4>
-                <div className="action-value">+12% ROI</div>
-                <p className="action-desc">Predicted lift from Q4 targeted loyalty initiative.</p>
+                <h4 className="action-label">Buy vs Pass</h4>
+                <div className="action-value">{totalBuy} / {totalPass}</div>
+                <p className="action-desc">{buyRatePercent}% of agents decided to buy in this scenario.</p>
               </motion.div>
 
               <motion.div 
@@ -447,9 +561,9 @@ const ResultsPage = ({ scenario }) => {
                 <div className="action-icon icon-blue">
                   <Shield size={24} />
                 </div>
-                <h4 className="action-label">Risk Mitigation</h4>
-                <div className="action-value">CAPEX</div>
-                <p className="action-desc">Reallocate 15% of unused marketing budget to R&D.</p>
+                <h4 className="action-label">Bottleneck Risk</h4>
+                <div className="action-value">{operationalRisk}</div>
+                <p className="action-desc">Capacity check: {canHandleTraffic ? 'Traffic can be handled.' : 'Potential overload detected.'}</p>
               </motion.div>
 
               <motion.div 
@@ -460,18 +574,18 @@ const ResultsPage = ({ scenario }) => {
                 <div className="action-icon icon-blue">
                   <Globe size={24} />
                 </div>
-                <h4 className="action-label">Audience Target</h4>
-                <div className="action-value">Gen-Z (SEA)</div>
-                <p className="action-desc">Heaviest alignment with sustainable packaging metrics.</p>
+                <h4 className="action-label">Operational Notes</h4>
+                <div className="action-value">Execution</div>
+                <p className="action-desc">{operationalNotes}</p>
               </motion.div>
             </div>
 
             <div className="cta-card">
               <div className="cta-glow"></div>
               <h4 className="cta-title">Need a different scenario?</h4>
-              <p className="cta-desc">Clone this simulation and modify variables to explore 'What-If' scenarios instantly.</p>
-              <button className="btn-cta">
-                Clone Simulation
+              <p className="cta-desc">Run a new scenario and compare outcome quality immediately.</p>
+              <button className="btn-cta" onClick={onRunAnother}>
+                Run New Simulation
               </button>
             </div>
           </div>
@@ -496,13 +610,123 @@ const ResultsPage = ({ scenario }) => {
 export default function SwarmSimulation() {
   const [view, setView] = useState('LANDING');
   const [scenarioInput, setScenarioInput] = useState('');
+  const [runId, setRunId] = useState(0);
+  const [isRunning, setIsRunning] = useState(false);
+  const [simulationError, setSimulationError] = useState('');
+  const [simulationResult, setSimulationResult] = useState(null);
+
+  const abortControllerRef = useRef(null);
+  const completionTimeoutRef = useRef(null);
+
+  const clearCompletionTimeout = useCallback(() => {
+    if (completionTimeoutRef.current) {
+      window.clearTimeout(completionTimeoutRef.current);
+      completionTimeoutRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+      clearCompletionTimeout();
+    };
+  }, [clearCompletionTimeout]);
+
+  const runSimulation = useCallback(async (scenarioText) => {
+    const trimmedScenario = scenarioText.trim();
+    if (!trimmedScenario) {
+      return;
+    }
+
+    clearCompletionTimeout();
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    setRunId((current) => current + 1);
+    setSimulationResult(null);
+    setSimulationError('');
+    setView('SIMULATING');
+    setIsRunning(true);
+
+    try {
+      const merchantId = localStorage.getItem('owner_id');
+      if (!merchantId) {
+        throw new Error('Please log in first. owner_id is missing in localStorage.');
+      }
+
+      const storedTargetMonth = localStorage.getItem('target_month');
+      const targetMonth = /^\d{4}-\d{2}$/.test(storedTargetMonth || '')
+        ? storedTargetMonth
+        : getFallbackTargetMonth();
+
+      const response = await fetch(`${API_BASE_URL}/swarm/simulate`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          merchant_id: merchantId,
+          target_month: targetMonth,
+          scenario_prompt: trimmedScenario
+        }),
+        signal: controller.signal
+      });
+
+      let data;
+      try {
+        data = await response.json();
+      } catch (_jsonError) {
+        data = null;
+      }
+
+      if (!response.ok || !data || data.status !== 'success') {
+        const fallbackDetail = `Simulation request failed (${response.status})`;
+        const detail = (data && (data.detail || data.message)) || fallbackDetail;
+        throw new Error(detail);
+      }
+
+      setSimulationResult(data);
+      setIsRunning(false);
+      completionTimeoutRef.current = window.setTimeout(() => {
+        setView('RESULTS');
+      }, 700);
+    } catch (error) {
+      if (error?.name === 'AbortError') {
+        return;
+      }
+
+      setIsRunning(false);
+      setSimulationError(error?.message || 'Simulation failed. Please try again.');
+    }
+  }, [clearCompletionTimeout]);
 
   const startSimulation = () => {
-    setView('SIMULATING');
+    runSimulation(scenarioInput);
   };
 
-  const finishSimulation = () => {
-    setView('RESULTS');
+  const retrySimulation = () => {
+    runSimulation(scenarioInput);
+  };
+
+  const goBackToScenario = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    setIsRunning(false);
+    setSimulationError('');
+    setView('LANDING');
+  };
+
+  const runAnotherScenario = () => {
+    setSimulationResult(null);
+    setSimulationError('');
+    setView('LANDING');
   };
 
   return (
@@ -530,7 +754,13 @@ export default function SwarmSimulation() {
             exit={{ opacity: 0 }}
             className="full-width"
           >
-            <SimulationPage onComplete={finishSimulation} />
+            <SimulationPage
+              isRunning={isRunning}
+              errorMessage={simulationError}
+              onRetry={retrySimulation}
+              onBack={goBackToScenario}
+              runId={runId}
+            />
           </motion.div>
         ) : (
           <motion.div
@@ -539,7 +769,11 @@ export default function SwarmSimulation() {
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0 }}
           >
-            <ResultsPage scenario={scenarioInput} />
+            <ResultsPage
+              scenario={scenarioInput}
+              simulationResult={simulationResult}
+              onRunAnother={runAnotherScenario}
+            />
           </motion.div>
         )}
       </AnimatePresence>

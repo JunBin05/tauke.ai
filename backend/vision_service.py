@@ -746,44 +746,67 @@ def _replace_supplier_invoices(supabase: Client, summary_id: str, rows: List[Dic
     return len(payload)
 
 
-def _call_text_llm(client: Any, system_prompt: str, user_prompt: str, temperature: float = 0.2) -> str:
-    mode = client.get("mode")
-    sdk_client = client.get("client")
+def _call_text_llm(
+    client: Any, system_prompt: str, user_prompt: str, temperature: float = 0.2
+) -> str:
+    _ = client  # Kept for call-site compatibility; glm-5.1 now routes via ILMU.
 
-    if mode == "modern":
-        response = sdk_client.chat.completions.create(
-            model="glm-5.1",
-            temperature=temperature,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
+    ilmu_api_key = os.getenv("ILMU_API_KEY")
+    if not ilmu_api_key:
+        raise HTTPException(
+            status_code=500,
+            detail="Missing ILMU_API_KEY environment variable for glm-5.1",
         )
 
-        if not getattr(response, "choices", None):
-            raise HTTPException(status_code=502, detail="Text model returned no choices")
+    model_name = os.getenv("ILMU_MODEL", "ilmu-glm-5.1")
 
-        return _extract_model_text(response.choices[0].message.content)
+    try:
+        response = requests.post(
+            "https://api.ilmu.ai/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {ilmu_api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": model_name,
+                "temperature": temperature,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+            },
+            timeout=60,
+        )
+        
+        # Check if the API returned an error code, and extract the real error message
+        if not response.ok:
+            error_details = response.text
+            try:
+                error_details = response.json()
+            except ValueError:
+                pass
+            raise Exception(f"HTTP {response.status_code}: {error_details}")
+            
+        response.raise_for_status()
+        
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"ILMU text model request failed: {exc}",
+        ) from exc
 
-    if mode == "legacy":
-        response = sdk_client.model_api.invoke(
-            model="glm-5.1",
-            temperature=temperature,
-            prompt=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
+    payload = response.json() if response.content else {}
+    choices = payload.get("choices") if isinstance(payload, dict) else None
+    if not isinstance(choices, list) or not choices:
+        raise HTTPException(
+            status_code=502,
+            detail=f"ILMU text response invalid: {payload}",
         )
 
-        data = response.get("data") if isinstance(response, dict) else None
-        choices = data.get("choices") if isinstance(data, dict) else None
-        if not isinstance(choices, list) or not choices:
-            raise HTTPException(status_code=502, detail=f"Legacy text response invalid: {response}")
-
-        first_choice = choices[0] if isinstance(choices[0], dict) else {}
-        return _extract_model_text(first_choice.get("content", ""))
-
-    raise HTTPException(status_code=500, detail="Unsupported zhipu client mode")
+    first_choice = choices[0] if isinstance(choices[0], dict) else {}
+    message = first_choice.get("message") if isinstance(first_choice, dict) else {}
+    content = message.get("content") if isinstance(message, dict) else ""
+    return _extract_model_text(content)
 
 
 def _get_previous_month(month_str: str) -> str:
@@ -1719,7 +1742,7 @@ def _resolve_merchant_id(supabase, frontend_id: str) -> str:
     if res2.data:
         return str(res2.data[0]["shop_id"])
         
-    raise Exception("Shop not found in DB. Please check your localStorage ID.")
+    raise HTTPException(status_code=404, detail="Shop not found in DB. Please check your localStorage ID.")
 
 @app.get("/boardroom/trend/{owner_id}/{target_month}")
 def get_monthly_trend(owner_id: str, target_month: str):
@@ -2379,107 +2402,121 @@ def analyze_monthly_patterns(payload: AnalyzeMonthRequest):
     _fetch_diagnostic_patterns(supabase, actual_shop_id, report_month)
 
     return {"status": "success", "message": "Analysis complete!"}
-
-class SwarmSimulationRequest(BaseModel):
-    merchant_id: str
-    scenario_prompt: str
-
 # ---------------------------------------------------------
 # 3. SWARM SIMULATION ENGINE (MICROFISH)
 # ---------------------------------------------------------
+class SwarmSimulationRequest(BaseModel):
+    merchant_id: str = Field(min_length=1)
+    target_month: str = Field(min_length=7)
+    scenario_prompt: str = Field(min_length=1)
+
 @app.post("/swarm/simulate")
 def run_swarm_simulation(payload: SwarmSimulationRequest):
     try:
         supabase = get_supabase_client()
-        actual_merchant_id = _resolve_merchant_id(supabase, payload.merchant_id.strip())
         
-        # 1. Fetch Merchant Foundation (Identity & Target Audience)
-        merch_res = supabase.table("merchants").select("shop_name, type, operating_hours, pricing_tier, target_audience").eq("id", actual_merchant_id).execute()
+        # 1. Resolve ID and fetch Merchant Foundation
+        actual_merchant_id = _resolve_merchant_id(supabase, payload.merchant_id.strip())
+        merch_res = supabase.table("merchants").select("*").eq("shop_id", actual_merchant_id).limit(1).execute()
+        
         if not merch_res.data:
             raise HTTPException(status_code=404, detail="Merchant details missing.")
         merchant_data = merch_res.data[0]
+        merchant_profile_str = merchant_data.get("merchant_profile", "")
 
-        # 2. Fetch 1-Year Historical Patterns
-        hist_res = supabase.table("monthly_summaries").select("report_month, total_revenue, net_profit").eq("merchant_id", actual_merchant_id).order("report_month").limit(12).execute()
-        historical_data = hist_res.data if hist_res.data else "No historical data available."
+        # 2. Fetch the Hard Financial Data
+        financial_context = _build_financial_context_payload(supabase, actual_merchant_id, payload.target_month)
 
-        # 3. Inject External API Mocks (BestTime Traffic & Neighborhood)
+        # 3. 🚨 REINSTATED: The Hackathon Safeguard 🚨
         try:
-            # Call your existing real endpoint/function directly.
-            # (If fetch_external_signals is in agent_tools.py, make sure you imported it at the top!)
-            real_signals = fetch_external_signal(actual_merchant_id)
-            
-            # Note: If your fetch_external_signal endpoint returns a dict like {"status": "success", "data": {...}}
-            # you want to pass just the raw data to the AI. Adjust the .get() if your return format is different.
-            external_signals = real_signals.get("data", real_signals)
-
-            """
-            # ALTERNATIVE: If you prefer to call them individually, you can do this instead:
-            # (Assuming your merchant table has lat/lng or you fetch it here)
-            # merchant_lat = merchant_data.get("latitude")
-            # merchant_lng = merchant_data.get("longitude")
-            # traffic = fetch_foot_traffic(actual_merchant_id)
-            # surroundings = analyze_surrounding(merchant_lat, merchant_lng)
-            # external_signals = { "traffic": traffic, "neighborhood": surroundings }
-            """
-
+            external_signals = _fetch_external_signals(supabase, actual_merchant_id, merchant_profile_str, payload.target_month)
         except Exception as api_error:
             print(f"Warning: Real APIs failed during simulation - {api_error}")
-            # CRITICAL HACKATHON SAFEGUARD: 
-            # If BestTime or Google API rate-limits you or times out during the live demo, 
-            # this prevents the Swarm from crashing!
+            # CRITICAL HACKATHON SAFEGUARD: Prevents Swarm from crashing if rate-limited!
             external_signals = {
-                "warning": "Real-time signals temporarily unavailable. Proceeding with baseline merchant data."
+                "warning": "Real-time signals temporarily unavailable. Proceeding with baseline merchant data.",
+                "foot_traffic": {"data": {"live_intensity": 50}} # Safe default
             }
 
-        # 4. Generate the Swarm via Zhipu AI
-        llm_client = _get_llm_client()
-        
+        # 4. Dynamic Agent Count (Based on foot traffic)
+        foot_traffic_data = external_signals.get("foot_traffic", {}).get("data", {})
+        live_intensity = _to_float(foot_traffic_data.get("live_intensity") if isinstance(foot_traffic_data, dict) else 50.0, 50.0)
+        agent_count = max(10, min(50, int(live_intensity))) # Capped so JSON doesn't break
+
+        # 5. THE MASTER MICROFISH PROMPT (V1 + V2 Rules Combined)
         system_prompt = (
-            "You are the MicroFish Swarm Intelligence Engine. Your job is to simulate a hyper-realistic multi-agent market response to a business scenario. \n"
+            "You are the MicroFish Swarm Intelligence Engine and Financial Auditor. "
+            "Your job is to simulate a hyper-realistic multi-agent market response to a business scenario.\n\n"
             "CRITICAL RULES:\n"
-            "1. AGENT DISTRIBUTION: You must spawn simulated agents strictly matching the merchant's 'target_audience' JSON percentages.\n"
-            "2. PERSONALITIES: Assign high-variance, distinctly different personalities even within the same demographic (e.g., brand-loyal vs. price-sensitive).\n"
-            "3. CAPACITY CHECK: Compare the resulting foot traffic against the 'operating_hours' and 'besttime_traffic_peak'. If traffic surges, determine if the shop bottlenecks (operational failure).\n"
-            "4. PROFIT OVER TRAFFIC: A promotion might bring 50% more traffic but lower net profit. Calculate the realistic financial impact based on 'pricing_tier'.\n\n"
-            "RETURN ONLY STRICT JSON in this format:\n"
+            "1. AGENT DISTRIBUTION: You must spawn exactly " + str(agent_count) + " individual virtual customer agents in the 'agents' array. Their roles must match the 'target_audience' JSON percentages.\n"
+            "2. CAPACITY CHECK: Compare the resulting foot traffic against 'operating_hours'. If traffic surges, determine if the shop bottlenecks (operational failure).\n"
+            "3. PROFIT OVER TRAFFIC: A promotion might bring 50% more traffic but lower net profit. Calculate the realistic financial impact based on 'pricing_tier'.\n"
+            "4. OUTPUT FORMAT: Return ONLY strict JSON. NO markdown fences.\n\n"
+            "JSON SCHEMA REQUIREMENT:\n"
             "{\n"
-            "  \"simulation_summary\": \"A 2-sentence overview of the outcome\",\n"
-            "  \"financial_impact\": {\n"
-            "    \"projected_traffic_change_pct\": 0.0,\n"
-            "    \"projected_profit_change_pct\": 0.0,\n"
-            "    \"profitability_verdict\": \"Highly Profitable | Break-even | Loss-Making\"\n"
+            "  \"simulation_summary\": \"A 2-sentence overview of the outcome.\",\n"
+            "  \"financial_analysis\": {\n"
+            "    \"baseline_estimated_profit\": 1500,\n"
+            "    \"projected_new_profit\": 1800,\n"
+            "    \"profit_boost\": 300,\n"
+            "    \"final_verdict\": \"PROCEED\"\n"
             "  },\n"
             "  \"operational_impact\": {\n"
-            "    \"can_handle_traffic\": true/false,\n"
-            "    \"bottleneck_risk\": \"None | Moderate | Severe\",\n"
-            "    \"operational_notes\": \"Details on kitchen/staff capacity\"\n"
+            "    \"can_handle_traffic\": true,\n"
+            "    \"bottleneck_risk\": \"Moderate\",\n"
+            "    \"operational_notes\": \"Kitchen will struggle during lunch rush due to the promotion.\"\n"
             "  },\n"
             "  \"swarm_behavior\": [\n"
-            "    { \"segment\": \"Students (40%)\", \"reaction\": \"Loved the discount, high conversion.\", \"churn_risk\": \"Low\" },\n"
-            "    { \"segment\": \"Professionals (60%)\", \"reaction\": \"Ignored it, prefer speed over price.\", \"churn_risk\": \"High\" }\n"
+            "    { \"segment\": \"Students (40%)\", \"reaction\": \"Loved the discount.\", \"churn_risk\": \"Low\" }\n"
+            "  ],\n"
+            "  \"agents\": [\n"
+            "    {\"id\": 1, \"role\": \"Student\", \"trait\": \"Broke\", \"decision\": \"buy\", \"reason\": \"Too cheap to pass up.\"}\n"
             "  ]\n"
             "}"
         )
 
         user_prompt = (
-            f"--- MERCHANT PROFILE ---\n{json.dumps(merchant_data)}\n\n"
-            f"--- HISTORICAL 1-YEAR FINANCIALS ---\n{json.dumps(historical_data)}\n\n"
-            f"--- EXTERNAL SIGNALS (Traffic & Neighborhood) ---\n{json.dumps(external_signals)}\n\n"
-            f"--- THE SCENARIO (PROMPT) ---\n\"{payload.scenario_prompt}\"\n\n"
-            "Run the 30-day swarm simulation now and return the JSON."
+            f"--- THE SCENARIO ---\n\"{payload.scenario_prompt}\"\n\n"
+            f"--- MERCHANT FOUNDATION ---\n"
+            f"Type: {merchant_data.get('type')}\n"
+            f"Pricing Tier: {merchant_data.get('pricing_tier')}\n"
+            f"Operating Hours: {merchant_data.get('operating_hours')}\n"
+            f"Target Audience Mix: {json.dumps(merchant_data.get('target_audience', {}))}\n\n"
+            f"--- INTERNAL DATA (Includes 12-Month Historical Curve) ---\n{json.dumps(financial_context)}\n\n"
+            f"--- EXTERNAL SIGNALS (Traffic & Weather) ---\n{json.dumps(external_signals)}\n\n"
+            f"Run the simulation and return the pure JSON."
         )
 
-        # Temperature 0.3 allows the AI to inject realistic chaos and variance
-        raw_json = _call_text_llm(llm_client, system_prompt, user_prompt, temperature=0.3)
-        simulation_results = _parse_model_json(raw_json)
+        # 6. Call LLM & Parse (Temp 0.4 for V2's requested "realistic chaos")
+        # ILMU glm-5.1 call path is handled inside _call_text_llm.
+        raw_json_response = _call_text_llm(None, system_prompt, user_prompt, temperature=0.4)
+        simulation_data = _parse_model_json(raw_json_response, source_name="Simulation model", required_kind="object")
+
+        # 7. Extract UI Stats safely
+        raw_agents = simulation_data.get("agents", [])
+        if not isinstance(raw_agents, list):
+            raw_agents = []
+
+        total_buy = sum(1 for agent in raw_agents if isinstance(agent, dict) and str(agent.get("decision", "")).strip().lower() == "buy")
+        total_pass = len(raw_agents) - total_buy
 
         return {
             "status": "success",
             "scenario": payload.scenario_prompt,
-            "results": simulation_results
+            "summary": simulation_data.get("simulation_summary", ""),
+            "financials": simulation_data.get("financial_analysis", {}),
+            "operations": simulation_data.get("operational_impact", {}),
+            "swarm_behavior": simulation_data.get("swarm_behavior", []), # 👈 V2's group summaries
+            "stats": {
+                "total_agents": len(raw_agents),
+                "total_buy": total_buy,
+                "total_pass": total_pass
+            },
+            "swarm_data": raw_agents # 👈 V1's individual dots
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"Swarm Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))

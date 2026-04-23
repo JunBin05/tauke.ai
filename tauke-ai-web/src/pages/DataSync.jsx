@@ -212,27 +212,6 @@ export default function DataSync() {
 
   return (
     <div className="sync-layout-root">
-      {/* Side Navigation */}
-      <nav className="sync-sidebar">
-        <div className="sync-sidebar-header">
-          <h1 style={{ fontSize: '18px', fontWeight: 900, margin: 0 }}>Tauke.AI</h1>
-          <p style={{ fontSize: '12px', color: '#717786', margin: 0 }}>SME Intelligence</p>
-        </div>
-        
-        <div className="sync-nav-list">
-          <NavItem icon={LayoutDashboard} label="Dashboard" />
-          <NavItem icon={LineChart} label="Insights" />
-          <NavItem icon={RefreshCw} label="Data Sync" active />
-          <NavItem icon={BarChart3} label="Reporting" />
-          <NavItem icon={Settings} label="Settings" />
-        </div>
-
-        <div className="sync-nav-list" style={{ marginTop: 'auto', paddingTop: '24px', borderTop: '1px solid #e8e8ea' }}>
-          <NavItem icon={HelpCircle} label="Support" />
-          <NavItem icon={LogOut} label="Sign Out" />
-        </div>
-      </nav>
-
       {/* Main Content Area */}
       <main className="sync-main-content">
         <header className="sync-top-header">

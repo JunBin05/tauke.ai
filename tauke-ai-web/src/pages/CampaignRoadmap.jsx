@@ -68,34 +68,6 @@ export default function CampaignRoadmap() {
 
   return (
     <div className="roadmap-page">
-      <aside className="roadmap-sidebar" aria-label="Sidebar">
-        <div className="roadmap-brand-block">
-          <h1 className="roadmap-brand-title">Tauke.AI</h1>
-          <p className="roadmap-brand-subtitle">SME Intelligence</p>
-        </div>
-
-        <nav className="roadmap-nav" aria-label="Primary navigation">
-          {navItems.map((item) => (
-            <NavLink
-              key={item.label}
-              to={item.to}
-              className={({ isActive }) => `roadmap-nav-item${isActive || item.active ? " is-active" : ""}`}
-            >
-              <span className="material-symbols-outlined roadmap-nav-icon" aria-hidden="true">{item.icon}</span>
-              <span className="roadmap-nav-label">{item.label}</span>
-            </NavLink>
-          ))}
-        </nav>
-
-        <div className="roadmap-user-block">
-          <div className="roadmap-avatar" aria-hidden="true">A</div>
-          <div>
-            <p className="roadmap-user-name">Admin User</p>
-            <p className="roadmap-user-meta">Manage Account</p>
-          </div>
-        </div>
-      </aside>
-
       <main className="roadmap-main">
         <div className="roadmap-shell">
           <header className="roadmap-header">

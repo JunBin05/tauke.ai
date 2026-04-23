@@ -133,7 +133,6 @@
 /* Main Content */
 .sc-main {
   flex: 1;
-  margin-left: 280px;
   padding: 48px 64px;
   max-width: 1200px;
 }
