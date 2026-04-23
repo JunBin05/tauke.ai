@@ -2850,6 +2850,11 @@ def run_swarm_simulation(payload: SwarmSimulationRequest):
             "- financial_analysis: {baseline_estimated_profit, projected_new_profit, profit_boost, final_verdict: PROCEED/AVOID}\n"
             "- operational_impact: {can_handle_traffic: bool, bottleneck_risk: Low/Moderate/High, operational_notes}\n"
             "- swarm_behavior: array of audience segments [{segment, reaction, churn_risk: Low/Medium/High}]"
+
+            "CRITICAL INSTRUCTION:"
+            "1. You must mathematically evaluate the final projected profit.\n"
+            "2. If the projected profit is less than 0, you MUST output 'decision': 'Reject'. \n"
+            "3. Under NO circumstances should you approve or recommend a strategy that results in negative profit, regardless of qualitative benefits like brand exposure or customer acquisition."
         )
 
         # Build compact context
