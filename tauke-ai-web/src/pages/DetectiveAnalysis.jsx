@@ -139,11 +139,58 @@ export default function DetectiveAnalysis() {
   const ownerId = localStorage.getItem("owner_id");
 
   useEffect(() => {
-    const interval = setInterval(() => {
-      setIntelligenceIndex((prev) => (prev + 1) % EXTERNAL_INTELLIGENCE.length);
-    }, 5000);
-    return () => clearInterval(interval);
-  }, []);
+    const fetchRealTrend = async () => {
+      // Don't even try to fetch if we don't have an ID
+      if (!ownerId) {
+        setIsLoadingChart(false);
+        return;
+      }
+      
+      setIsLoadingChart(true);
+      try {
+        const targetMonth = getApiMonth(selectedMonth);
+        const response = await fetch(`${API_BASE_URL}/boardroom/trend/${ownerId}/${targetMonth}`);
+        const data = await response.json();
+        
+        if (data.status === "success") {
+            // 1. Figure out how many days are in the selected month
+            const [monthName, yearName] = selectedMonth.split(" ");
+            const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+            const monthIndex = months.indexOf(monthName);
+            const daysInMonth = new Date(parseInt(yearName), monthIndex + 1, 0).getDate();
+
+            // 2. Create a blank template for the whole month with 0 revenue
+            const fullMonthData = Array.from({ length: daysInMonth }, (_, i) => ({
+              name: `${i + 1} ${monthName}`,
+              revenue: 0
+            }));
+
+            // 3. Merge the actual backend data into our blank template
+            if (data.trend_data && Array.isArray(data.trend_data)) {
+                data.trend_data.forEach(realDay => {
+                  // Find the matching day in our template (e.g., "1 Mar")
+                  const index = fullMonthData.findIndex(d => d.name === realDay.name);
+                  if (index !== -1) {
+                    fullMonthData[index].revenue = realDay.revenue;
+                  }
+                });
+            }
+
+            // 4. Set the padded data into the chart!
+            setChartData(fullMonthData);
+        } else {
+            setChartData([]); // Reset on failure
+        }
+      } catch (error) {
+        console.error("Failed to fetch real chart data:", error);
+        setChartData([]);
+      } finally {
+        setIsLoadingChart(false);
+      }
+    };
+
+    fetchRealTrend();
+  }, [selectedMonth, ownerId]);
 
   // 🚀 FIX 3: Bulletproof Month Translator
   const getApiMonth = (displayMonth) => {

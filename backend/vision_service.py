@@ -746,44 +746,67 @@ def _replace_supplier_invoices(supabase: Client, summary_id: str, rows: List[Dic
     return len(payload)
 
 
-def _call_text_llm(client: Any, system_prompt: str, user_prompt: str, temperature: float = 0.2) -> str:
-    mode = client.get("mode")
-    sdk_client = client.get("client")
+def _call_text_llm(
+    client: Any, system_prompt: str, user_prompt: str, temperature: float = 0.2
+) -> str:
+    _ = client  # Kept for call-site compatibility; glm-5.1 now routes via ILMU.
 
-    if mode == "modern":
-        response = sdk_client.chat.completions.create(
-            model="glm-5.1",
-            temperature=temperature,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
+    ilmu_api_key = os.getenv("ILMU_API_KEY")
+    if not ilmu_api_key:
+        raise HTTPException(
+            status_code=500,
+            detail="Missing ILMU_API_KEY environment variable for glm-5.1",
         )
 
-        if not getattr(response, "choices", None):
-            raise HTTPException(status_code=502, detail="Text model returned no choices")
+    model_name = os.getenv("ILMU_MODEL", "ilmu-glm-5.1")
 
-        return _extract_model_text(response.choices[0].message.content)
+    try:
+        response = requests.post(
+            "https://api.ilmu.ai/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {ilmu_api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": model_name,
+                "temperature": temperature,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+            },
+            timeout=60,
+        )
+        
+        # Check if the API returned an error code, and extract the real error message
+        if not response.ok:
+            error_details = response.text
+            try:
+                error_details = response.json()
+            except ValueError:
+                pass
+            raise Exception(f"HTTP {response.status_code}: {error_details}")
+            
+        response.raise_for_status()
+        
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"ILMU text model request failed: {exc}",
+        ) from exc
 
-    if mode == "legacy":
-        response = sdk_client.model_api.invoke(
-            model="glm-5.1",
-            temperature=temperature,
-            prompt=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
+    payload = response.json() if response.content else {}
+    choices = payload.get("choices") if isinstance(payload, dict) else None
+    if not isinstance(choices, list) or not choices:
+        raise HTTPException(
+            status_code=502,
+            detail=f"ILMU text response invalid: {payload}",
         )
 
-        data = response.get("data") if isinstance(response, dict) else None
-        choices = data.get("choices") if isinstance(data, dict) else None
-        if not isinstance(choices, list) or not choices:
-            raise HTTPException(status_code=502, detail=f"Legacy text response invalid: {response}")
-
-        first_choice = choices[0] if isinstance(choices[0], dict) else {}
-        return _extract_model_text(first_choice.get("content", ""))
-
-    raise HTTPException(status_code=500, detail="Unsupported zhipu client mode")
+    first_choice = choices[0] if isinstance(choices[0], dict) else {}
+    message = first_choice.get("message") if isinstance(first_choice, dict) else {}
+    content = message.get("content") if isinstance(message, dict) else ""
+    return _extract_model_text(content)
 
 
 def _get_previous_month(month_str: str) -> str:
