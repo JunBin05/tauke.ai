@@ -239,6 +239,7 @@ h1, h2, h3, h4, h5, h6 {
 .tags-container {
   display: flex;
   justify-content: center;
+  flex-wrap: wrap; /* Add this line! */
   gap: 1rem;
   margin-top: 0.75rem;
 }
@@ -634,6 +635,61 @@ h1, h2, h3, h4, h5, h6 {
   gap: 1.5rem;
 }
 
+.roadmap-guidance-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  border-radius: 0.9rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--slate-200);
+  background: var(--white);
+  box-shadow: 0 4px 10px rgba(15, 23, 42, 0.06);
+}
+
+.roadmap-guidance-banner.is-abort {
+  border-color: #fecdd3;
+  background: #fff1f2;
+}
+
+.roadmap-guidance-banner.is-proceed {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+}
+
+.roadmap-guidance-icon {
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 9999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.roadmap-guidance-banner.is-abort .roadmap-guidance-icon {
+  color: #b91c1c;
+  background: #ffe4e6;
+}
+
+.roadmap-guidance-banner.is-proceed .roadmap-guidance-icon {
+  color: #166534;
+  background: #dcfce7;
+}
+
+.roadmap-guidance-title {
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 800;
+  color: var(--slate-800);
+}
+
+.roadmap-guidance-text {
+  margin: 0.2rem 0 0;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: var(--slate-600);
+}
+
 @media (min-width: 768px) {
   .results-header {
     flex-direction: row;
@@ -672,6 +728,20 @@ h1, h2, h3, h4, h5, h6 {
   font-size: 0.875rem;
   cursor: pointer;
 }
+.btn-primary {
+  padding: 0.75rem 1.5rem;
+  border-radius: 9999px;
+  border: none;
+  background: linear-gradient(135deg, #0058bc 0%, #0070eb 100%);
+  color: #ffffff;
+  font-weight: 700;
+  font-size: 0.875rem;
+  cursor: pointer;
+  box-shadow: 0 8px 18px rgba(0, 88, 188, 0.28);
+  transition: box-shadow 0.2s ease, transform 0.15s ease;
+}
+.btn-primary:hover:not(:disabled) { box-shadow: 0 10px 22px rgba(0, 88, 188, 0.38); transform: translateY(-1px); }
+.btn-primary:disabled { opacity: 0.65; cursor: not-allowed; }
 
 .verdict-card {
   margin-bottom: 3rem;

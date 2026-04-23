@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useNavigate } from 'react-router-dom';
 import { 
   PlayCircle, 
   MessageSquare, 
@@ -102,7 +103,7 @@ const LandingPage = ({ onStart, value, onChange }) => {
                 <ArrowUp size={20} />
               </motion.button>
             </div>
-            <div className="tags">
+            <div className="tags-container">
                 {[
                   'Launch Buy-1-Free-1 promo during Friday lunch rush', 
                   'Increase signature coffee price by RM2.00', 
@@ -358,6 +359,60 @@ const SimulationPage = ({ isRunning, errorMessage, onRetry, onBack, runId }) => 
 };
 
 const ResultsPage = ({ scenario, simulationResult, onRunAnother }) => {
+  const navigate = useNavigate();
+  const [roadmapLoading, setRoadmapLoading] = useState(false);
+  const [roadmapError, setRoadmapError] = useState('');
+
+  const generateRoadmap = async () => {
+    const merchantId = localStorage.getItem('owner_id');
+    const targetMonth = localStorage.getItem('target_month') || '';
+    if (!merchantId) { setRoadmapError('Please log in first.'); return; }
+    setRoadmapLoading(true);
+    setRoadmapError('');
+    try {
+      const financials = simulationResult?.financials || {};
+      const operations = simulationResult?.operations || {};
+      const swarmBehavior = Array.isArray(simulationResult?.swarm_behavior)
+        ? simulationResult.swarm_behavior
+        : [];
+      const signalReferences = Array.isArray(simulationResult?.signal_references)
+        ? simulationResult.signal_references
+        : [];
+      const strategyText = [simulationResult?.summary || '', operations.operational_notes || ''].filter(Boolean).join(' ');
+      const res = await fetch(`${API_BASE_URL}/roadmap/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          merchant_id: merchantId,
+          target_month: /^\d{4}-\d{2}$/.test(targetMonth) ? targetMonth : undefined,
+          strategy_text: strategyText || scenario,
+          source: 'SIMULATION',
+          justification: `Scenario: ${scenario}. Verdict: ${financials.final_verdict || 'N/A'}. Profit boost: ${financials.profit_boost ?? 0}.`,
+          external_signals: {
+            signal_references: signalReferences,
+            scenario,
+          },
+          financial_trend: {
+            simulation_financials: financials,
+          },
+          diagnostic_patterns: {
+            operational_impact: operations,
+            swarm_behavior: swarmBehavior,
+          },
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.status !== 'success') throw new Error(data.detail || 'Roadmap generation failed.');
+      localStorage.setItem('swarm_roadmap', JSON.stringify(data.roadmap));
+      localStorage.setItem('swarm_scenario', scenario);
+      navigate('/campaign-roadmap');
+    } catch (err) {
+      setRoadmapError(err.message || 'Failed to generate roadmap.');
+    } finally {
+      setRoadmapLoading(false);
+    }
+  };
+
   const financials = simulationResult?.financials && typeof simulationResult.financials === 'object'
     ? simulationResult.financials
     : {};
@@ -378,8 +433,18 @@ const ResultsPage = ({ scenario, simulationResult, onRunAnother }) => {
   const buyRatePercent = totalAgents > 0 ? Math.round((totalBuy / totalAgents) * 100) : 0;
   const rawVerdict = String(financials.final_verdict || '').trim().toUpperCase();
   const verdict = (rawVerdict === 'ABORT' || rawVerdict === 'AVOID') ? 'ABORT' : 'PROCEED';
+  const isAbortVerdict = verdict === 'ABORT';
   const verdictClass = verdict === 'ABORT' ? 'text-red' : 'text-green';
   const verdictStroke = verdict === 'ABORT' ? '#ef4444' : 'var(--green-600)';
+
+  const roadmapHeaderTitle = isAbortVerdict
+    ? "Don't worry - we can pivot this idea."
+    : 'Turn this into an executable roadmap.';
+  const roadmapHeaderDesc = isAbortVerdict
+    ? 'This idea is risky in its current form, but we can generate a safer, more suitable plan with similar intent and stronger guardrails.'
+    : 'Generate a complete step-by-step plan directly from this simulation insight.';
+  const roadmapButtonLabel = isAbortVerdict ? 'Generate Safer Roadmap' : 'Generate Roadmap';
+  const roadmapButtonLoadingLabel = isAbortVerdict ? 'Building safer roadmap...' : 'Generating...';
 
   const baselineProfit = Number(financials.baseline_estimated_profit) || 0;
   const projectedProfit = Number(financials.projected_new_profit) || 0;
@@ -416,7 +481,27 @@ const ResultsPage = ({ scenario, simulationResult, onRunAnother }) => {
           </motion.div>
           <div className="header-actions">
             <button className="btn-secondary" onClick={onRunAnother}>Run Another Scenario</button>
+            <button
+              className="btn-primary"
+              onClick={generateRoadmap}
+              disabled={roadmapLoading}
+              style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+            >
+              {roadmapLoading ? roadmapButtonLoadingLabel : `📋 ${roadmapButtonLabel}`}
+            </button>
           </div>
+          <div className={`roadmap-guidance-banner ${isAbortVerdict ? 'is-abort' : 'is-proceed'}`}>
+            <div className="roadmap-guidance-icon">
+              {isAbortVerdict ? <Shield size={16} /> : <CheckCircle size={16} />}
+            </div>
+            <div>
+              <p className="roadmap-guidance-title">{roadmapHeaderTitle}</p>
+              <p className="roadmap-guidance-text">{roadmapHeaderDesc}</p>
+            </div>
+          </div>
+          {roadmapError && (
+            <p style={{ color: '#ef4444', fontSize: '0.85rem', marginTop: '6px' }}>{roadmapError}</p>
+          )}
         </div>
 
         <motion.div 
@@ -580,9 +665,29 @@ const ResultsPage = ({ scenario, simulationResult, onRunAnother }) => {
 
             <div className="cta-card">
               <div className="cta-glow"></div>
-              <h4 className="cta-title">Need a different scenario?</h4>
-              <p className="cta-desc">Run a new scenario and compare outcome quality immediately.</p>
-              <button className="btn-cta" onClick={onRunAnother}>
+              <h4 className="cta-title">
+                {isAbortVerdict ? 'Your core intent is valid. Let us tune the strategy.' : 'Turn this into an action plan?'}
+              </h4>
+              <p className="cta-desc">
+                {isAbortVerdict
+                  ? 'No stress. We can generate a more suitable roadmap that keeps your original direction but reduces risk and improves execution fit.'
+                  : 'Let the AI generate a step-by-step execution roadmap based on this simulation.'}
+              </p>
+              <button
+                className="btn-cta"
+                onClick={generateRoadmap}
+                disabled={roadmapLoading}
+              >
+                {roadmapLoading ? `⏳ ${roadmapButtonLoadingLabel}` : `📋 ${roadmapButtonLabel}`}
+              </button>
+              {roadmapError && (
+                <p style={{ color: '#fda4af', fontSize: '0.8rem', marginTop: '8px' }}>{roadmapError}</p>
+              )}
+              <button
+                className="btn-cta"
+                style={{ marginTop: '8px', background: 'transparent', border: '1px solid rgba(255,255,255,0.2)', color: 'rgba(255,255,255,0.7)' }}
+                onClick={onRunAnother}
+              >
                 Run New Simulation
               </button>
             </div>

@@ -108,8 +108,8 @@ class LocationUpdateRequest(BaseModel):
 
 class GenerateRoadmapRequest(BaseModel):
     merchant_id: str = Field(min_length=1)
-    target_month: str = Field(min_length=7)
-    source: str = Field(min_length=1, pattern=r"^(BOARDROOM|SANDBOX)$")
+    target_month: Optional[str] = None
+    source: str = Field(min_length=1, pattern=r"^(BOARDROOM|SANDBOX|SIMULATION)$")
     strategy_text: str = Field(...) # The chosen idea
     justification: str = Field(...) # Why the AI chose it (e.g., the profit boost reasoning)
     external_signals: Dict[str, Any] = Field(default_factory=dict)
@@ -2382,15 +2382,29 @@ def generate_roadmap(payload: GenerateRoadmapRequest) -> Dict[str, Any]:
     try:
         supabase = get_supabase_client()
         llm_client = get_zhipu_client()
-        target_month = _normalize_report_month(payload.target_month)
+        target_month: Optional[str] = None
+        if isinstance(payload.target_month, str) and payload.target_month.strip():
+            target_month = _normalize_report_month(payload.target_month)
+        elif payload.source in {"BOARDROOM", "SANDBOX"}:
+            raise HTTPException(status_code=400, detail="target_month is required for BOARDROOM/SANDBOX roadmap generation")
 
         financial_trend = payload.financial_trend if isinstance(payload.financial_trend, dict) else {}
-        if not financial_trend:
+        if not financial_trend and target_month:
             financial_trend = _fetch_financial_trend(supabase, payload.merchant_id, target_month)
+        elif not financial_trend:
+            financial_trend = {
+                "mode": "simulation_only",
+                "note": "No target_month provided; using simulation insights supplied by caller.",
+            }
 
         diagnostic_patterns = payload.diagnostic_patterns if isinstance(payload.diagnostic_patterns, dict) else {}
-        if not diagnostic_patterns:
+        if not diagnostic_patterns and target_month:
             diagnostic_patterns = _fetch_diagnostic_patterns(supabase, payload.merchant_id, target_month)
+        elif not diagnostic_patterns:
+            diagnostic_patterns = {
+                "mode": "simulation_only",
+                "note": "No month-based diagnostics available; roadmap grounded on strategy, justification, and provided insights.",
+            }
 
         combined_financial_context = {
             "financial_trend": financial_trend,
@@ -2442,7 +2456,7 @@ def generate_roadmap(payload: GenerateRoadmapRequest) -> Dict[str, Any]:
         roadmap_data = _normalize_roadmap_payload(roadmap_data)
 
         # Save to Database (Optional: Save it so the Boss can view it later)
-        if payload.source == "BOARDROOM":
+        if payload.source == "BOARDROOM" and target_month:
             supabase.table("monthly_summaries").update({
                 "action_plan": json.dumps(roadmap_data) # Save the structured JSON
             }).eq("merchant_id", payload.merchant_id).eq("report_month", target_month).execute()

@@ -1,160 +1,197 @@
-import { NavLink, useNavigate } from "react-router-dom";
+import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import "./CampaignRoadmap.css";
 
-const navItems = [
-  { label: "Store Setup", icon: "storefront", to: "/store-configuration" },
-  { label: "Data Sync", icon: "sync", to: "/data-sync" },
-  { label: "Analysis", icon: "insights", to: "/detective-analysis" },
-  { label: "Clarification", icon: "forum", to: "/supervisor-clarification" },
-  { label: "War Room", icon: "groups", to: "/ai-debate" },
-  { label: "Strategy Synthesis", icon: "hub", to: "/final-synthesis", active: true }
-];
+// Icon map for timeline phases
+const PHASE_ICONS = ["search", "rocket_launch", "trending_up", "flag", "task_alt"];
+const STATE_MAP = ["completed", "active", "pending", "pending", "pending"];
 
-const roadmapPhases = [
-  {
-    phase: "Phase 1",
-    title: "Campaign Setup And Offer Configuration",
-    description:
-      "Finalize bundle composition, promotion guardrails, and channel-level message templates for a controlled launch.",
-    status: "Completed",
-    tone: "done",
-    owner: "Owner: Strategy Team",
-    timeline: "Timeline: Week 1",
-    activity: "Activity: 12 launch assets prepared"
-  },
-  {
-    phase: "Phase 2",
-    title: "Pilot Launch In High-Volume Time Slots",
-    description:
-      "Deploy in selected windows to validate demand response, queue handling, and margin behavior before full rollout.",
-    status: "In Progress",
-    tone: "active",
-    owner: "Owner: Operations Lead",
-    timeline: "Timeline: Weeks 2 to 3",
-    activity: "Activity: 68% execution completion"
-  },
-  {
-    phase: "Phase 3",
-    title: "Performance Review And Guardrail Adjustment",
-    description:
-      "Review conversion, average order value, and contribution margin to tune category caps and inventory pacing.",
-    status: "Upcoming",
-    tone: "next",
-    owner: "Owner: Finance + Growth",
-    timeline: "Timeline: Week 4",
-    activity: "Activity: KPI checkpoint scheduled"
-  },
-  {
-    phase: "Phase 4",
-    title: "Scaled Rollout With Weekly Optimization",
-    description:
-      "Expand execution across all targeted windows with weekly optimization loops and clear stop-loss triggers.",
-    status: "Queued",
-    tone: "next",
-    owner: "Owner: Regional Manager",
-    timeline: "Timeline: Weeks 5 to 8",
-    activity: "Activity: Expansion readiness at 82%"
-  }
-];
+const MainBlock = ({ phase, index }) => (
+  <div className="main-block">
+    <p className="phase-label">PHASE {String(index + 1).padStart(2, "0")}</p>
+    <h4>{phase.title}</h4>
+    <ul style={{ margin: "8px 0 12px", paddingLeft: "16px" }}>
+      {(phase.tasks || []).map((task, i) => (
+        <li key={i} style={{ fontSize: "13px", color: "#64748b", lineHeight: "1.6", marginBottom: "4px" }}>
+          {task}
+        </li>
+      ))}
+    </ul>
+  </div>
+);
 
-const summaryItems = [
-  { label: "Overall completion", value: "68%" },
-  { label: "On-track phases", value: "3 / 4" },
-  { label: "Expected launch window", value: "Next 10 days" }
-];
+const DateBlock = ({ phase, index, totalDays }) => {
+  const statusMap = [
+    { text: "On Track", icon: "check_circle", cls: "success" },
+    { text: "Next Phase", icon: "arrow_forward", cls: "active" },
+    { text: "Pending", icon: "", cls: "pending" },
+  ];
+  const s = statusMap[Math.min(index, 2)];
+
+  return (
+    <div className="date-block">
+      <span className="date-label">ESTIMATED DURATION</span>
+      <div className="date-row">
+        <span className="date-value">~{Math.ceil(totalDays / 3)} days</span>
+        <span className={`status-badge ${s.cls}`}>
+          {s.icon && <span className="material-symbols-outlined">{s.icon}</span>}
+          {s.text}
+        </span>
+      </div>
+    </div>
+  );
+};
 
 export default function CampaignRoadmap() {
   const navigate = useNavigate();
+  const [roadmap, setRoadmap] = useState(null);
+  const [scenario, setScenario] = useState("");
+
+  useEffect(() => {
+    const stored = localStorage.getItem("swarm_roadmap");
+    const sc = localStorage.getItem("swarm_scenario");
+    if (stored) {
+      try {
+        setRoadmap(JSON.parse(stored));
+      } catch {
+        setRoadmap(null);
+      }
+    }
+    if (sc) setScenario(sc);
+  }, []);
+
+  const phases = roadmap?.phases || [];
+  const totalDays = roadmap?.estimated_total_days || 14;
 
   return (
     <div className="roadmap-page">
-      <main className="roadmap-main">
-        <div className="roadmap-shell">
-          <header className="roadmap-header">
-            <p className="roadmap-step">STEP 8 / EXECUTION ROADMAP</p>
-            <h2 className="roadmap-title">Campaign Roadmap</h2>
-            <p className="roadmap-subtitle">
-              The final strategy has now been translated into a practical execution plan with clear owners,
-              milestones, and measurable delivery checkpoints.
-            </p>
-          </header>
+      <div className="roadmap-content">
+        <header className="page-header">
+          <p className="kicker">STRATEGIC BLUEPRINT</p>
+          <h2 className="page-title">Campaign Roadmap</h2>
+          <p className="page-subtitle">
+            {scenario
+              ? `AI-generated execution plan for: "${scenario}"`
+              : "A structured visual execution path generated by AI based on your simulation."}
+          </p>
+        </header>
 
-          <section className="roadmap-layout" aria-label="Execution roadmap layout">
-            <div className="timeline-column">
-              <div className="timeline-head">
-                <h3>Execution Timeline</h3>
-                <span className="timeline-head-pill">Live plan</span>
+        {/* Execution Summary */}
+        <section className="execution-summary-section">
+          <div className="summary-card">
+            <h3>Execution Summary</h3>
+            <div className="summary-stats">
+              <div className="stat-item">
+                <p className="label">DURATION</p>
+                <p className="value">{totalDays} Days</p>
               </div>
-
-              <ol className="timeline-list">
-                {roadmapPhases.map((phase, index) => (
-                  <li className="timeline-item" key={phase.title}>
-                    <div className="timeline-rail" aria-hidden="true">
-                      <span className={`timeline-dot tone-${phase.tone}`} />
-                      {index < roadmapPhases.length - 1 && <span className="timeline-line" />}
-                    </div>
-
-                    <article className="phase-card">
-                      <div className="phase-top-row">
-                        <p className="phase-label">{phase.phase}</p>
-                        <span className={`phase-status tone-${phase.tone}`}>{phase.status}</span>
-                      </div>
-
-                      <h4 className="phase-title">{phase.title}</h4>
-                      <p className="phase-description">{phase.description}</p>
-
-                      <div className="phase-meta-grid">
-                        <p>{phase.owner}</p>
-                        <p>{phase.timeline}</p>
-                        <p>{phase.activity}</p>
-                      </div>
-                    </article>
-                  </li>
-                ))}
-              </ol>
+              <div className="stat-item">
+                <p className="label">PHASES</p>
+                <p className="value">{phases.length}</p>
+              </div>
+              <div className="stat-item">
+                <p className="label">SOURCE</p>
+                <p className="value" style={{ fontSize: "14px", fontWeight: 700, color: "#0f6cff" }}>
+                  AI Generated
+                </p>
+              </div>
             </div>
+            <div className="summary-footer">
+              <div className="team-avatars">
+                <img src="https://i.pravatar.cc/100?img=1" alt="Team 1" />
+                <img src="https://i.pravatar.cc/100?img=2" alt="Team 2" />
+                <div className="team-more">+</div>
+              </div>
+              <button
+                className="view-capacity"
+                style={{ background: "none", border: "none", cursor: "pointer", color: "#0f6cff", fontSize: "13px", fontWeight: 600 }}
+                onClick={() => navigate("/simulation")}
+              >
+                ← Back to Simulation
+              </button>
+            </div>
+          </div>
 
-            <aside className="summary-column" aria-label="Progress summary">
-              <section className="summary-card">
-                <p className="summary-kicker">Execution status</p>
-                <h3 className="summary-value">68%</h3>
-                <p className="summary-copy">Current completion across setup and pilot rollout activities.</p>
+          <div className="ai-confidence-card">
+            <span className="material-symbols-outlined stars-icon">auto_awesome</span>
+            <h2>{phases.length > 0 ? `${phases.length}` : "—"}</h2>
+            <p>
+              {phases.length > 0
+                ? `Execution phases generated by AI across ${totalDays} days`
+                : "No roadmap generated yet. Run a simulation first."}
+            </p>
+          </div>
+        </section>
 
-                <div className="summary-track" aria-hidden="true">
-                  <span className="summary-fill" />
+        {/* Central Alternating Timeline */}
+        {phases.length > 0 ? (
+          <section className="central-timeline">
+            {phases.map((phase, index) => {
+              const isLeft = index % 2 === 0;
+              const icon = PHASE_ICONS[index % PHASE_ICONS.length];
+              const state = STATE_MAP[Math.min(index, STATE_MAP.length - 1)];
+              return (
+                <div className={`timeline-row ${state}`} key={index}>
+                  <div className="timeline-col-left">
+                    {isLeft ? (
+                      <MainBlock phase={phase} index={index} />
+                    ) : (
+                      <DateBlock phase={phase} index={index} totalDays={totalDays} />
+                    )}
+                  </div>
+                  <div className="timeline-center-icon">
+                    <span className="material-symbols-outlined">{icon}</span>
+                  </div>
+                  <div className="timeline-col-right">
+                    {isLeft ? (
+                      <DateBlock phase={phase} index={index} totalDays={totalDays} />
+                    ) : (
+                      <MainBlock phase={phase} index={index} />
+                    )}
+                  </div>
                 </div>
-
-                <div className="summary-list">
-                  {summaryItems.map((item) => (
-                    <div className="summary-row" key={item.label}>
-                      <span>{item.label}</span>
-                      <strong>{item.value}</strong>
-                    </div>
-                  ))}
-                </div>
-              </section>
-            </aside>
+              );
+            })}
           </section>
-
-          <div className="roadmap-actions">
+        ) : (
+          <div style={{ textAlign: "center", padding: "60px 20px", color: "#94a3b8" }}>
+            <span className="material-symbols-outlined" style={{ fontSize: "48px", display: "block", marginBottom: "12px" }}>
+              map
+            </span>
+            <p style={{ fontSize: "16px", fontWeight: 600 }}>No roadmap yet</p>
+            <p style={{ fontSize: "13px", marginTop: "4px" }}>
+              Run a simulation and click "Generate Roadmap" to build your AI execution plan.
+            </p>
             <button
-              type="button"
-              className="roadmap-secondary-action"
-              onClick={() => navigate("/final-synthesis")}
+              className="btn-primary"
+              style={{ marginTop: "20px" }}
+              onClick={() => navigate("/simulation")}
             >
-              Back to Synthesis
-            </button>
-            <button
-              type="button"
-              className="roadmap-primary-action"
-              onClick={() => navigate("/landing")}
-            >
-              <span>Confirm and Launch Plan</span>
-              <span className="material-symbols-outlined" aria-hidden="true">arrow_forward</span>
+              Go to Simulation
             </button>
           </div>
-        </div>
-      </main>
+        )}
+
+        {/* Bottom CTA */}
+        {phases.length > 0 && (
+          <section className="cta-section">
+            <div className="cta-content">
+              <h3>Ready to execute?</h3>
+              <p>
+                This roadmap was generated specifically from your swarm simulation result. Share it with your team or run another scenario to compare.
+              </p>
+            </div>
+            <div className="cta-actions">
+              <button className="btn-secondary" onClick={() => navigate("/simulation")}>
+                Run Another Simulation
+              </button>
+              <button className="btn-primary" onClick={() => window.print()}>
+                Export Roadmap
+              </button>
+            </div>
+          </section>
+        )}
+      </div>
     </div>
   );
 }
