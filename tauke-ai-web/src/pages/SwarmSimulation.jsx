@@ -357,6 +357,10 @@ const SimulationPage = ({ isRunning, errorMessage, onRetry, onBack, runId }) => 
     </div>
   );
 };
+// Extract the raw, individual agents from the backend
+  const rawAgents = Array.isArray(simulationResult?.swarm_data)
+    ? simulationResult.swarm_data
+    : [];
 
 const ResultsPage = ({ scenario, simulationResult, onRunAnother }) => {
   const navigate = useNavigate();
@@ -661,6 +665,54 @@ const ResultsPage = ({ scenario, simulationResult, onRunAnother }) => {
                 <div className="action-value">Execution</div>
                 <p className="action-desc">{operationalNotes}</p>
               </motion.div>
+            </div>
+
+            {/* 👇 PASTE THIS NEW LIVE AGENT FEED HERE 👇 */}
+            <div style={{ marginTop: '24px', backgroundColor: '#ffffff', borderRadius: '16px', border: '1px solid var(--slate-100)', overflow: 'hidden' }}>
+              <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--slate-100)', backgroundColor: '#f8fafc' }}>
+                <h4 style={{ margin: 0, fontSize: '0.9rem', fontWeight: 700, color: 'var(--slate-900)' }}>
+                  Live Agent Feed ({rawAgents.length} Simulated Personas)
+                </h4>
+              </div>
+              <div style={{ maxHeight: '280px', overflowY: 'auto', padding: '12px' }}>
+                {rawAgents.length > 0 ? (
+                  rawAgents.map((agent, idx) => {
+                    const isBuy = String(agent.decision).toLowerCase() === 'buy';
+                    return (
+                      <motion.div 
+                        key={idx}
+                        initial={{ opacity: 0, x: 20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ delay: idx * 0.1 }}
+                        style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', marginBottom: '8px', backgroundColor: '#f8fafc', borderRadius: '8px' }}
+                      >
+                        <div>
+                          <div style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--slate-900)' }}>
+                            {agent.segment || `Agent #${idx + 1}`}
+                          </div>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--slate-500)', marginTop: '2px', lineHeight: 1.4 }}>
+                            {agent.persona || agent.reaction || 'Simulated profile'}
+                          </div>
+                        </div>
+                        <div style={{ 
+                          padding: '4px 10px', 
+                          borderRadius: '20px', 
+                          fontSize: '0.75rem', 
+                          fontWeight: 800,
+                          backgroundColor: isBuy ? 'var(--green-50)' : 'var(--red-50)',
+                          color: isBuy ? 'var(--green-600)' : 'var(--red-600)'
+                        }}>
+                          {isBuy ? 'BUY' : 'PASS'}
+                        </div>
+                      </motion.div>
+                    );
+                  })
+                ) : (
+                  <p style={{ textAlign: 'center', fontSize: '0.8rem', color: 'var(--slate-400)', padding: '20px 0' }}>
+                    No raw agent data returned by LLM.
+                  </p>
+                )}
+              </div>
             </div>
 
             <div className="cta-card">
