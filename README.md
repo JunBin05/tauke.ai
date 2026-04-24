@@ -93,6 +93,9 @@ Once a strategy is selected, Tauke.AI converts it into an actionable step-by-ste
 
 ---
 
+
+
+
 ## 🧭 Demo Flow
 
 A typical user journey in Tauke.AI looks like this:
@@ -105,6 +108,34 @@ A typical user journey in Tauke.AI looks like this:
 6. **Run a simulation for a specific business idea if desired**
 7. **Review the final recommendation**
 8. **Follow the generated execution roadmap**
+
+
+sequenceDiagram
+    autonumber
+    actor User as F&B Owner
+    participant F as Frontend (React/Vite)
+    participant B as Backend (Python Agents)
+    participant DB as Supabase (PostgreSQL)
+    participant APIs as External APIs / LLMs
+
+    User->>F: Authenticate & Configure Store
+    F->>DB: Save Store Profile & Sync CSV Data
+    DB-->>F: Confirm Data Sync
+    User->>F: Request Detective Analysis
+    F->>B: Send POS Data & Store Context
+    B->>APIs: Fetch Weather, Local Trends & Analyze Metrics
+    APIs-->>B: Return Context & Calculated Metrics (AOV, UPT)
+    B-->>F: Display Strengths, Weaknesses & Anomalies
+    User->>F: Initiate AI Debate
+    F->>B: Trigger Multi-Agent System
+    B->>APIs: Agents generate, critique, and refine strategies
+    B-->>F: Stream Debate Transcript to Dashboard
+    User->>F: Run Swarm Simulation on Chosen Strategy
+    F->>B: Simulate Campaign Outcomes
+    B-->>F: Return Projected ROI & Success Metrics
+    User->>F: Generate Final Roadmap
+    F->>B: Synthesize Debate & Simulation Data
+    B-->>User: Deliver Step-by-Step Actionable Campaign Roadmap
 
 ---
 
@@ -138,21 +169,32 @@ Tauke.AI also incorporates selected external context signals:
 
 ---
 
-## 🖼️ Suggested Architecture Diagram
+## 🏗️ System Architecture
 
-You can place your architecture diagram here once ready.
+Based on our exact tech stack, separating the React frontend, Python AI backend, Supabase data layer, and external intelligence APIs.
 
-```text
-/docs/architecture-diagram.png
+```mermaid
+graph TD
+    subgraph Frontend
+    A[Vercel: React + Vite App]
+    end
+
+    subgraph Backend_Services
+    B[Python FastAPI / Agent Services]
+    C[LLM Models: Zhipu AI / Gemini]
+    D[External APIs: OpenWeather, Serper, GNews, Google Places]
+    end
+
+    subgraph Data_Layer
+    E[(Supabase: PostgreSQL, Auth & Storage)]
+    end
+
+    A -->|API Requests & Context| B
+    B -->|AI Processing & Generation| C
+    B -->|Fetch Live Context| D
+    B -->|Read/Write Data| E
+    E -->|Real-time Data & Auth| A
 ```
-
-Or use a Markdown image link like:
-
-```md
-![Tauke.AI Architecture](docs/architecture-diagram.png)
-```
-
----
 
 ## 🚀 Local Development Setup
 
