@@ -158,7 +158,7 @@ export default function StoreConfiguration() {
       if (data.status === "success") {
         setIsSuccess(true);
         setTimeout(() => {
-          navigate("/simulation");
+          navigate("/data-sync");
         }, 1500);
       } else {
         alert(data.message || "Failed to save profile.");

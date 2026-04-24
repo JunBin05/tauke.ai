@@ -38,6 +38,12 @@ export default function GoogleSync() {
                     localStorage.setItem("owner_id", data.owner_id);
                     localStorage.setItem("access_token", session.access_token);
                     
+                    // Store Metadata for the Profile Menu
+                    localStorage.setItem("user_email", session.user.email);
+                    localStorage.setItem("user_name", session.user.user_metadata.full_name || "New Boss");
+                    localStorage.setItem("user_avatar", session.user.user_metadata.avatar_url || "");
+                    localStorage.setItem("login_type", "google");
+                    
                     // 👇 THE BULLETPROOF ROUTING LOGIC 👇
                     if (!data.profile_complete) {
                         // Profile is missing data -> Send to Store Configuration!

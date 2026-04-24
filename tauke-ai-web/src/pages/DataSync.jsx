@@ -132,7 +132,7 @@ export default function DataSync() {
       if (data.status === "success") {
         setAllMonthsSyncStates(prev => ({
           ...prev,
-          [selectedMonth]: { ...prev[selectedMonth], [type]: { isSynced: true, isUploading: false } }
+          [selectedMonth]: { ...prev[selectedMonth], [type]: { isSynced: true, isUploading: false, fileName: file.name } }
         }));
       } else {
         const errorMessage = data.detail || data.message || "Unknown error occurred";
@@ -214,14 +214,6 @@ export default function DataSync() {
     <div className="sync-layout-root">
       {/* Main Content Area */}
       <main className="sync-main-content">
-        <header className="sync-top-header">
-          <Bell color="#717786" size={20} style={{ cursor: 'pointer' }} />
-          <Grid color="#717786" size={20} style={{ cursor: 'pointer' }} />
-          <div className="sync-avatar">
-            <img src="https://ui-avatars.com/api/?name=Boss&background=0058bc&color=fff" alt="Profile" style={{ width: '100%' }} />
-          </div>
-        </header>
-
         <div className="sync-page-container">
           <div className="sync-page-header">
             <div>
@@ -289,7 +281,7 @@ export default function DataSync() {
             <SyncCard 
               title="Sales & Transactions" format="(CSV)" description="Historical POS records and daily transaction logs."
               icon={ReceiptText} isSynced={currentSyncStates.sales.isSynced} isUploading={currentSyncStates.sales.isUploading}
-              onUpload={(file) => handleFileUpload('sales', file)} acceptedFormats=".csv"
+              onUpload={(file) => handleFileUpload('sales', file)} acceptedFormats=".csv" fileName={currentSyncStates.sales.fileName}
               rows={currentSyncStates.sales.isSynced ? "Ready" : null} colSpan="sync-col-12" accentColor="secondary"
             />
 
@@ -297,7 +289,7 @@ export default function DataSync() {
               title="Monthly Statement" format="(PDF)"
               description={currentSyncStates.procurement.isSynced ? "All supplier ledgers are verified and reconciled." : "Awaiting period ledger for cost validation."}
               icon={Package} isSynced={currentSyncStates.procurement.isSynced} isUploading={currentSyncStates.procurement.isUploading}
-              onUpload={(file) => handleFileUpload('procurement', file)} acceptedFormats=".pdf,image/*"
+              onUpload={(file) => handleFileUpload('procurement', file)} acceptedFormats=".pdf,image/*" fileName={currentSyncStates.procurement.fileName}
               errorMsg={!currentSyncStates.procurement.isSynced ? `Awaiting ${selectedMonth.split(' ')[0]} Supplier Ledger` : undefined}
               colSpan="sync-col-6" accentColor="error"
             />
@@ -306,7 +298,7 @@ export default function DataSync() {
               title="Invoice Management" format="(PDF)"
               description={currentSyncStates.invoices.isSynced ? "Monthly invoicing data processed and stored." : "Internal invoicing data incomplete for this period."}
               icon={Receipt} isSynced={currentSyncStates.invoices.isSynced} isUploading={currentSyncStates.invoices.isUploading}
-              onUpload={(file) => handleFileUpload('invoices', file)} acceptedFormats=".pdf,image/*"
+              onUpload={(file) => handleFileUpload('invoices', file)} acceptedFormats=".pdf,image/*" fileName={currentSyncStates.invoices.fileName}
               errorMsg={!currentSyncStates.invoices.isSynced ? `Missing ${selectedMonth.split(' ')[0]} Transaction Invoices` : undefined}
               colSpan="sync-col-6" accentColor="error"
             />
@@ -353,7 +345,7 @@ function NavItem({ icon: Icon, label, active = false }) {
   );
 }
 
-function SyncCard({ title, format, description, icon: Icon, isSynced, isUploading, onUpload, rows, lastUpdate, errorMsg, colSpan, accentColor, acceptedFormats }) {
+function SyncCard({ title, format, description, icon: Icon, isSynced, isUploading, onUpload, rows, lastUpdate, errorMsg, colSpan, accentColor, acceptedFormats, fileName }) {
   const fileInputRef = useRef(null);
 
   // Triggers when a user actually selects a file from their computer
@@ -387,6 +379,12 @@ function SyncCard({ title, format, description, icon: Icon, isSynced, isUploadin
 
       {isSynced ? (
         <div>
+          {fileName && (
+            <div className="sync-stat-row" style={{ marginBottom: '8px' }}>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}><FileText size={16} color="#717786" /> <span style={{ fontSize: '14px', fontWeight: 600 }}>Uploaded File</span></div>
+              <span style={{ fontSize: '14px', fontWeight: 700, color: '#0058bc', maxWidth: '200px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={fileName}>{fileName}</span>
+            </div>
+          )}
           {rows && (
             <div className="sync-stat-row">
               <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}><Database size={16} color="#717786" /> <span style={{ fontSize: '14px', fontWeight: 600 }}>Data Parsed</span></div>
@@ -399,10 +397,18 @@ function SyncCard({ title, format, description, icon: Icon, isSynced, isUploadin
                <CheckCircle2 size={16} color="#006e28" />
              </div>
           )}
+          <button 
+            onClick={() => fileInputRef.current.click()} 
+            disabled={isUploading} 
+            className="sync-btn-upload"
+            style={{ marginTop: '16px', background: 'transparent', color: '#0058bc', border: '1px solid #0058bc' }}
+          >
+            {isUploading ? <><Loader2 size={20} className="lucide-spin" /> Uploading...</> : <><RefreshCw size={20} /> Edit File</>}
+          </button>
         </div>
       ) : (
         <button onClick={() => fileInputRef.current.click()} disabled={isUploading} className="sync-btn-upload">
-          {isUploading ? <><Loader2 size={20} className="lucide-spin" /> Uploading...</> : <><Upload size={20} /> Upload Missing File</>}
+          {isUploading ? <><Loader2 size={20} className="lucide-spin" /> Uploading...</> : <><Upload size={20} /> Edit File</>}
         </button>
       )}
     </div>

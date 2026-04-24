@@ -825,6 +825,7 @@ const ResultsPage = ({ scenario, simulationResult, onRunAnother }) => {
 };
 
 export default function SwarmSimulation() {
+  const navigate = useNavigate();
   const [view, setView] = useState('LANDING');
   const [scenarioInput, setScenarioInput] = useState('');
   const [runId, setRunId] = useState(0);
@@ -923,8 +924,46 @@ export default function SwarmSimulation() {
     }
   }, [clearCompletionTimeout]);
 
-  const startSimulation = () => {
-    runSimulation(scenarioInput);
+  const startSimulation = async () => {
+    const ownerId = localStorage.getItem("owner_id");
+    if (!ownerId) {
+      navigate('/login');
+      return;
+    }
+
+    try {
+      // 1. Check Store Configuration
+      const profileRes = await fetch(`${API_BASE_URL}/merchants/profile/${ownerId}`);
+      const profileData = await profileRes.json();
+      
+      if (profileData.status !== 'success' || !profileData.profile || !profileData.profile.target_audience || Object.keys(profileData.profile.target_audience).length === 0) {
+        alert("Action Required: Please complete your Store Configuration first.");
+        navigate('/store-configuration');
+        return;
+      }
+
+      // 2. Check Data Sync
+      const targetMonth = localStorage.getItem('target_month') || getFallbackTargetMonth();
+      const syncRes = await fetch(`${API_BASE_URL}/merchants/${ownerId}/sync-status/${targetMonth}`);
+      const syncData = await syncRes.json();
+      
+      let allSynced = false;
+      if (syncData.status === 'success' && syncData.sync_state) {
+        allSynced = Object.values(syncData.sync_state).every(s => s.isSynced);
+      }
+
+      if (!allSynced) {
+        alert("Action Required: Please synchronize your missing data records before running a simulation.");
+        navigate('/data-sync');
+        return;
+      }
+
+      runSimulation(scenarioInput);
+
+    } catch (err) {
+      console.error("Readiness check failed:", err);
+      runSimulation(scenarioInput);
+    }
   };
 
   const retrySimulation = () => {

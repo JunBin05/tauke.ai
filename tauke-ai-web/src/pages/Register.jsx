@@ -47,6 +47,8 @@ export default function Register() {
 
             if (data.status === "success") {
                 localStorage.setItem("owner_id", data.owner_id);
+                localStorage.setItem("user_email", email);
+                localStorage.setItem("login_type", "email");
                 navigate("/store-configuration"); 
             } else {
                 setErrorMessage(data.message || "Registration failed.");

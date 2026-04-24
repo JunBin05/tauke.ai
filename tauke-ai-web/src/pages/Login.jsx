@@ -56,6 +56,11 @@ export default function Login() {
                 // Save the session data to localStorage so other pages know who is logged in!
                 localStorage.setItem("owner_id", data.owner_id);
                 localStorage.setItem("access_token", data.access_token);
+                localStorage.setItem("user_email", email);
+                localStorage.setItem("login_type", "email");
+                // Clear any old Google data
+                localStorage.removeItem("user_name");
+                localStorage.removeItem("user_avatar");
 
                 // Redirect to the dashboard/landing page
                 navigate("/landing"); // Change this to your actual next page

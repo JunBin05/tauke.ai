@@ -16,6 +16,7 @@ import LoadingPage from "./pages/LoadingPage";
 import GoogleSync from "./pages/GoogleSync";
 import Dashboard from './pages/Dashboard';
 import SwarmSimulation from './pages/SwarmSimulation';
+import ChangePassword from "./pages/ChangePassword";
 
 function App() {
   return (
@@ -26,6 +27,7 @@ function App() {
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
         <Route path="/loading" element={<LoadingPage />} />
+        <Route path="/change-password" element={<ChangePassword />} />
 
         {/* ── App routes wrapped with the global sidebar layout ── */}
         <Route element={<AppLayout />}>

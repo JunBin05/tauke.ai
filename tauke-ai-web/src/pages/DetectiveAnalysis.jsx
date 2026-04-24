@@ -229,21 +229,6 @@ export default function DetectiveAnalysis() {
   return (
     <div className="dashboard-container">
       <div className="main-content">
-        <header className="top-app-bar">
-          <div />
-          <div className="header-icons">
-            <button className="icon-btn"><Bell className="w-5 h-5" /></button>
-            <button className="icon-btn"><Settings className="w-5 h-5" /></button>
-            <button className="icon-btn"><HelpCircle className="w-5 h-5" /></button>
-            <div className="user-profile">
-              <img 
-                src="https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?ixlib=rb-1.2.1&auto=format&fit=facearea&facepad=2&w=256&h=256&q=80" 
-                alt="Profile" 
-              />
-            </div>
-          </div>
-        </header>
-
         <main className="scroll-area">
           <div className="page-center">
             <div className="page-header">
