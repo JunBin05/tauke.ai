@@ -2317,98 +2317,106 @@ class BoardroomDebateRequest(BaseModel):
     target_month: str = Field(min_length=7)
     boss_answers: str = Field(default="")
 
+class SynthesisRequest(BaseModel):
+    merchant_id: str
+    target_month: str
+    boss_answers: str
+    debate_strategies: list
+
+@app.post("/boardroom/synthesis")
+def boardroom_synthesis(payload: SynthesisRequest) -> Dict[str, Any]:
+    try:
+        supabase = get_supabase_client()
+        llm_client = get_zhipu_client()
+
+        actual_shop_id = _resolve_merchant_id(supabase, payload.merchant_id.strip())
+        merchant_profile = _fetch_merchant_profile(supabase, actual_shop_id)
+
+        # The Prompt: Forcing the LLM to output exact JSON for your UI
+        ceo_sys = (
+            "You are an AI synthesis engine for an F&B business. Review the board's debate, financial data, and boss context. "
+            "Generate exactly 3 strategic vectors (Aggressive, Hybrid Pivot, Defensive) and the comparative analysis metrics for a dashboard table.\n\n"
+            "Output PURE JSON exactly matching this structure:\n"
+            "{\n"
+            "  \"strategies\": [\n"
+            "    {\"id\": \"aggressive\", \"title\": \"Aggressive Expansion\", \"description\": \"<2 sentences>\", \"growth\": \"<e.g. +140%>\", \"riskLevel\": \"HIGH RISK\"},\n"
+            "    {\"id\": \"hybrid\", \"title\": \"Hybrid Pivot\", \"description\": \"<2 sentences>\", \"growth\": \"<e.g. +85%>\", \"riskLevel\": \"OPTIMIZED\", \"recommended\": true},\n"
+            "    {\"id\": \"defensive\", \"title\": \"Defensive Consolidation\", \"description\": \"<2 sentences>\", \"growth\": \"<e.g. +20%>\", \"riskLevel\": \"CONSERVATIVE\"}\n"
+            "  ],\n"
+            "  \"comparativeAnalysis\": {\n"
+            "    \"corePros\": {\"aggressive\": \"<Short text>\", \"hybrid\": \"<Short text>\", \"defensive\": \"<Short text>\"},\n"
+            "    \"riskFactors\": {\"aggressive\": \"<Short text>\", \"hybrid\": \"<Short text>\", \"defensive\": \"<Short text>\"},\n"
+            "    \"resourceDrain\": {\"aggressive\": 90, \"hybrid\": 55, \"defensive\": 20},\n"
+            "    \"probabilityOfSuccess\": {\"aggressive\": \"34%\", \"hybrid\": \"81%\", \"defensive\": \"94%\"}\n"
+            "  }\n"
+            "}"
+        )
+        
+        ceo_usr = (
+            f"Merchant: {merchant_profile}\n"
+            f"Target Month: {payload.target_month}\n"
+            f"Boss Context: {payload.boss_answers}\n"
+            f"Board Debate: {json.dumps(payload.debate_strategies)}\n"
+            "Return the JSON."
+        )
+
+        raw_json = _call_text_llm(llm_client, ceo_sys, ceo_usr, temperature=0.2)
+        synthesis_data = _parse_model_json(raw_json, source_name="CEO Synthesis", required_kind="object")
+
+        return {
+            "status": "success",
+            "data": synthesis_data
+        }
+
+    except Exception as exc:
+        print(f"CEO Synthesis Error: {exc}")
+        raise HTTPException(status_code=502, detail=f"Synthesis failed: {exc}") from exc
+
 @app.post("/boardroom/debate")
 def boardroom_debate(payload: BoardroomDebateRequest) -> Dict[str, Any]:
     try:
-        frontend_id = payload.merchant_id.strip()
+        merchant_id = payload.merchant_id.strip()
         target_month = _normalize_report_month(payload.target_month)
         boss_answers = payload.boss_answers.strip() or "No additional context provided."
 
         supabase = get_supabase_client()
         llm_client = get_zhipu_client()
 
-        # 👈 THE FIX: Resolve the ID!
-        actual_shop_id = _resolve_merchant_id(supabase, frontend_id)
-
         # 1. Fetch Context using the REAL actual_shop_id
+        actual_shop_id = _resolve_merchant_id(supabase, merchant_id)
+
         financial_context = _build_financial_context_payload(supabase, actual_shop_id, target_month)
         financial_trend = financial_context.get("financial_trend", {})
         diagnostic_json = financial_context.get("diagnostic_patterns", {})
-        
         merchant_profile = _fetch_merchant_profile(supabase, actual_shop_id)
         external_signals = _fetch_external_signals(supabase, actual_shop_id, merchant_profile, target_month)
 
-        # ── LLM CALL #1: Generate 3 Strategies AND debate them in one shot ──
+        # 2. SINGLE LLM CALL: Only the 3 Executives
         strategy_sys = (
-            "You are a board of AI advisors for an F&B business (CMO, COO, CFO). "
-            "Based on the provided financial data and boss's context, do two things in sequence:\n"
-            "PART A: Generate 3 distinct recovery strategies for the business.\n"
-            "PART B: Have CMO, COO, CFO each evaluate those 3 strategies in 1-2 sentences.\n\n"
-            "Output PURE JSON — no markdown, no backticks:\n"
-            "{\n"
-            "  \"cmo_opinion\": \"CMO's 2-sentence take on best strategy and why\",\n"
-            "  \"coo_opinion\": \"COO's 2-sentence take on best strategy and why\",\n"
-            "  \"cfo_opinion\": \"CFO's 2-sentence take on best strategy and why\",\n"
-            "  \"strategies_summary\": \"Brief 1-sentence overview of all 3 strategies considered\"\n"
-            "}"
+            "You are a board of AI advisors for an F&B business. "
+            "Based on the provided financial data, external signals, and boss's context, generate 3 distinct recovery strategies from 3 perspectives.\n\n"
+            "Output PURE JSON ARRAY exactly matching this structure (no markdown):\n"
+            "[\n"
+            "  {\"role\": \"CMO\", \"icon\": \"trending_up\", \"stance\": \"<Short Catchy Title>\", \"copy\": \"<2 sentence argument>\", \"indicatorLabel\": \"Impact\", \"indicatorValue\": \"High\", \"tone\": \"up\"},\n"
+            "  {\"role\": \"CFO\", \"icon\": \"shield\", \"stance\": \"<Short Catchy Title>\", \"copy\": \"<2 sentence argument>\", \"indicatorLabel\": \"Risk\", \"indicatorValue\": \"Low\", \"tone\": \"down\"},\n"
+            "  {\"role\": \"COO\", \"icon\": \"account_tree\", \"stance\": \"<Short Catchy Title>\", \"copy\": \"<2 sentence argument>\", \"indicatorLabel\": \"Readiness\", \"indicatorValue\": \"Stable\", \"tone\": \"neutral\"}\n"
+            "]"
         )
         strategy_usr = (
             f"Merchant: {merchant_profile}\n"
             f"Target Month: {target_month}\n"
             f"Boss Context: {boss_answers}\n"
-            f"Financial Diagnostics: {json.dumps(diagnostic_json, indent=2)[:2000]}\n"
-            f"Financial Trend: {json.dumps(financial_trend, indent=2)[:1000]}\n"
-            f"External Signals: {json.dumps(external_signals, indent=2)[:1000]}\n"
-            "Return the JSON."
+            f"Financial Diagnostics: {json.dumps(diagnostic_json)}\n"
+            f"External Signals: {json.dumps(external_signals)}\n"
+            "Return the JSON array."
         )
-        opinions_raw = _call_text_llm(llm_client, strategy_sys, strategy_usr, temperature=0.3)
-        opinions = _parse_model_json(opinions_raw, source_name="Debate Opinions")
-        if not isinstance(opinions, dict):
-            opinions = {}
-
-        cmo_text = opinions.get("cmo_opinion", "CMO recommends aggressive growth.")
-        coo_text = opinions.get("coo_opinion", "COO recommends phased rollout.")
-        cfo_text = opinions.get("cfo_opinion", "CFO recommends margin protection.")
-        strategies_summary = opinions.get("strategies_summary", "Three recovery strategies were evaluated.")
-
-        # ── LLM CALL #2: CEO synthesizes the final verdict as JSON ──
-        boss_sys = (
-            "You are the CEO. Select ONE best strategy from the executives' opinions. "
-            "Output ONLY pure JSON (no markdown):\n"
-            "{\n"
-            "  \"strategies\": [\n"
-            "    {\"role\": \"Growth Hacker\", \"icon\": \"trending_up\", \"stance\": \"Aggressive Push\", \"copy\": \"<CMO opinion>\", \"indicatorLabel\": \"Impact\", \"indicatorValue\": \"+15%\", \"tone\": \"up\"},\n"
-            "    {\"role\": \"Risk Manager\", \"icon\": \"shield\", \"stance\": \"Margin Protection\", \"copy\": \"<CFO opinion>\", \"indicatorLabel\": \"Risk\", \"indicatorValue\": \"Low\", \"tone\": \"down\"},\n"
-            "    {\"role\": \"Operations Chief\", \"icon\": \"account_tree\", \"stance\": \"Phased Rollout\", \"copy\": \"<COO opinion>\", \"indicatorLabel\": \"Readiness\", \"indicatorValue\": \"Stable\", \"tone\": \"neutral\"}\n"
-            "  ],\n"
-            "  \"recommended_strategy\": {\n"
-            "    \"role\": \"Consensus\", \"strategy\": \"<winning strategy title>\", \"argument_for\": \"<why>\", \"argument_against\": \"<risk accepted>\", \"projected_profit_impact\": \"<e.g. +RM 1,200>\"\n"
-            "  }\n"
-            "}"
-        )
-        boss_usr = f"CMO: {cmo_text}\nCOO: {coo_text}\nCFO: {cfo_text}\nStrategies overview: {strategies_summary}\n\nReturn JSON."
-        boss_text = _call_text_llm(llm_client, boss_sys, boss_usr, 0.2)
-
-        try:
-            parsed_data = _parse_model_json(boss_text, source_name="Debate JSON", required_kind="object")
-        except Exception:
-            parsed_data = {
-                "strategies": [
-                    {"role": "Growth Hacker", "icon": "trending_up", "stance": "Aggressive Push", "copy": cmo_text, "indicatorLabel": "Impact", "indicatorValue": "High", "tone": "up"},
-                    {"role": "Risk Manager", "icon": "shield", "stance": "Margin Protection", "copy": cfo_text, "indicatorLabel": "Risk", "indicatorValue": "Low", "tone": "down"},
-                    {"role": "Operations Chief", "icon": "account_tree", "stance": "Phased Rollout", "copy": coo_text, "indicatorLabel": "Readiness", "indicatorValue": "Stable", "tone": "neutral"}
-                ],
-                "recommended_strategy": {
-                    "role": "Consensus", "strategy": "Balanced Execution Strategy",
-                    "argument_for": cmo_text, "argument_against": cfo_text,
-                    "projected_profit_impact": "+RM 800"
-                }
-            }
+        
+        raw_json = _call_text_llm(llm_client, strategy_sys, strategy_usr, temperature=0.3)
+        strategies = _parse_model_json(raw_json, source_name="Debate Opinions", required_kind="array")
 
         return {
             "status": "success",
-            "strategies": parsed_data.get("strategies", []),
-            "recommended_strategy": parsed_data.get("recommended_strategy", {})
+            "strategies": strategies
         }
 
     except Exception as exc:
@@ -2572,6 +2580,10 @@ def generate_roadmap(payload: GenerateRoadmapRequest) -> Dict[str, Any]:
     try:
         supabase = get_supabase_client()
         llm_client = get_zhipu_client()
+        
+        # 🚀 FIX 1: Resolve the frontend's owner_id to the real database shop_id!
+        actual_shop_id = _resolve_merchant_id(supabase, payload.merchant_id)
+
         target_month: Optional[str] = None
         if isinstance(payload.target_month, str) and payload.target_month.strip():
             target_month = _normalize_report_month(payload.target_month)
@@ -2580,7 +2592,8 @@ def generate_roadmap(payload: GenerateRoadmapRequest) -> Dict[str, Any]:
 
         financial_trend = payload.financial_trend if isinstance(payload.financial_trend, dict) else {}
         if not financial_trend and target_month:
-            financial_trend = _fetch_financial_trend(supabase, payload.merchant_id, target_month)
+            # 🚀 FIX 2: Use actual_shop_id here
+            financial_trend = _fetch_financial_trend(supabase, actual_shop_id, target_month)
         elif not financial_trend:
             financial_trend = {
                 "mode": "simulation_only",
@@ -2589,7 +2602,8 @@ def generate_roadmap(payload: GenerateRoadmapRequest) -> Dict[str, Any]:
 
         diagnostic_patterns = payload.diagnostic_patterns if isinstance(payload.diagnostic_patterns, dict) else {}
         if not diagnostic_patterns and target_month:
-            diagnostic_patterns = _fetch_diagnostic_patterns(supabase, payload.merchant_id, target_month)
+            # 🚀 FIX 3: Use actual_shop_id here
+            diagnostic_patterns = _fetch_diagnostic_patterns(supabase, actual_shop_id, target_month)
         elif not diagnostic_patterns:
             diagnostic_patterns = {
                 "mode": "simulation_only",
@@ -2649,7 +2663,8 @@ def generate_roadmap(payload: GenerateRoadmapRequest) -> Dict[str, Any]:
         if payload.source == "BOARDROOM" and target_month:
             supabase.table("monthly_summaries").update({
                 "action_plan": json.dumps(roadmap_data) # Save the structured JSON
-            }).eq("merchant_id", payload.merchant_id).eq("report_month", target_month).execute()
+            # 🚀 FIX 4: Use actual_shop_id here!
+            }).eq("merchant_id", actual_shop_id).eq("report_month", target_month).execute()
 
         return {
             "status": "success",

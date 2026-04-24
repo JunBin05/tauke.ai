@@ -1,18 +1,22 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
-import { 
-  PlayCircle, 
-  MessageSquare, 
-  ArrowUp, 
-  Settings, 
-  User, 
-  CheckCircle, 
-  Brain, 
-  TrendingUp, 
-  Zap, 
-  Globe, 
-  Shield, 
+import {
+  PlayCircle,
+  MessageSquare,
+  ArrowUp,
+  Settings,
+  User,
+  CheckCircle,
+  Brain,
+  TrendingUp,
+  Zap,
+  Globe,
+  Sparkles, // <-- New icon
+  Loader2,    // <-- New icon
+  Shield,
+  Activity,   // <-- Add this!
+  Lightbulb,   // <-- Add this!
   Store
 } from 'lucide-react';
 import { API_BASE_URL } from '../config';
@@ -41,25 +45,53 @@ const getFallbackTargetMonth = () => {
 // --- Components ---
 
 const LandingPage = ({ onStart, value, onChange }) => {
+  const navigate = useNavigate();
   const isActive = value.trim().length > 0;
+  const [isTyping, setIsTyping] = useState(false);
+
+  // Array of dynamic scenarios
+  const exampleScenarios = [
+    "Launch a RM15 'Rainy Day Combo' (Latte + Pastry) targeted at office workers.",
+    "Increase signature coffee price by RM2.00 to offset rising milk costs.",
+    "Competitor next door slashes prices by 50% for 3 days.",
+    "Run a 2-hour flash sale on GrabFood during the afternoon lull.",
+    "Introduce a loyalty program where the 5th coffee is free.",
+    "Close shop 2 hours early on Tuesdays to reduce staff overhead."
+  ];
+
+  const handleShowExample = async () => {
+    if (isTyping) return;
+    setIsTyping(true);
+    onChange(''); // Clear the input first
+
+    // Pick a random scenario
+    const randomScenario = exampleScenarios[Math.floor(Math.random() * exampleScenarios.length)];
+
+    // Typewriter effect
+    let currentText = '';
+    for (let i = 0; i < randomScenario.length; i++) {
+      currentText += randomScenario[i];
+      onChange(currentText);
+      await new Promise(r => setTimeout(r, 20)); // Typing speed
+    }
+
+    setIsTyping(false);
+  };
 
   return (
     <div className="landing-page">
-      {/* Aesthetic Ambient Lighting Effects */}
       <div className="ambient-light light-1"></div>
       <div className="ambient-light light-2"></div>
 
-      <motion.div 
+      <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         className="landing-content"
       >
         <div className="landing-header">
-          <span className="badge-v2">
-            Simulation Hub V2
-          </span>
+          <span className="badge-v2">Simulation Hub V2</span>
           <h1 className="landing-title">
-            Simulate the Future <br/>
+            Simulate the Future <br />
             <span className="text-blue">of Your SME.</span>
           </h1>
           <p className="landing-description">
@@ -68,56 +100,68 @@ const LandingPage = ({ onStart, value, onChange }) => {
         </div>
 
         <div className="landing-actions">
-          <motion.button 
-            whileHover={isActive ? { scale: 1.02 } : {}}
-            whileTap={isActive ? { scale: 0.95 } : {}}
-            onClick={isActive ? onStart : undefined}
-            disabled={!isActive}
-            className={`btn-start ${isActive ? 'active' : 'disabled'}`}
+          <motion.button
+            whileHover={isActive && !isTyping ? { scale: 1.02 } : {}}
+            whileTap={isActive && !isTyping ? { scale: 0.95 } : {}}
+            onClick={isActive && !isTyping ? onStart : undefined}
+            disabled={!isActive || isTyping}
+            className={`btn-start ${(isActive && !isTyping) ? 'active' : 'disabled'}`}
           >
             <span>Start Simulation</span>
             <PlayCircle size={32} fill="currentColor" />
           </motion.button>
 
-          {/* Integrated Chat Bar */}
           <div className="chat-bar-container">
+            {/* The Analysis Navigation Button */}
+            <motion.button
+              whileHover={{ scale: 1.01 }}
+              whileTap={{ scale: 0.98 }}
+              onClick={() => navigate('/landing')}
+              className="btn-auto-analyze"
+            >
+              <Activity size={18} className="text-blue" />
+              <span>Not sure where to start? <strong>Auto-Analyze Shop</strong></span>
+            </motion.button>
+
+            {/* The Input Bar */}
             <div className="chat-bar">
               <div className="chat-icon">
                 <MessageSquare size={20} />
               </div>
-              <input 
+
+              <input
                 autoFocus
                 className="chat-input"
-                placeholder="Describe a business scenario..." 
+                placeholder="Describe a business scenario..."
                 type="text"
                 value={value}
                 onChange={(e) => onChange(e.target.value)}
+                disabled={isTyping}
               />
-              <motion.button 
-                whileHover={isActive ? { opacity: 0.9 } : {}}
-                whileTap={isActive ? { scale: 0.9 } : {}}
-                onClick={isActive ? onStart : undefined}
-                disabled={!isActive}
-                className={`btn-arrow ${isActive ? 'active' : 'disabled'}`}
+
+              <motion.button
+                whileHover={isActive && !isTyping ? { opacity: 0.9 } : {}}
+                whileTap={isActive && !isTyping ? { scale: 0.9 } : {}}
+                onClick={isActive && !isTyping ? onStart : undefined}
+                disabled={!isActive || isTyping}
+                className={`btn-arrow ${(isActive && !isTyping) ? 'active' : 'disabled'}`}
               >
                 <ArrowUp size={20} />
               </motion.button>
             </div>
-            <div className="tags-container">
-                {[
-                  'Launch Buy-1-Free-1 promo during Friday lunch rush', 
-                  'Increase signature coffee price by RM2.00', 
-                  'Competitor next door slashes prices by 50%'
-                ].map((tag) => (
-                  <button 
-                    key={tag}
-                    onClick={() => onChange(tag)}
-                    className="tag-btn"
-                  >
-                    {tag}
-                  </button>
-                ))}
-              </div>
+
+            {/* Subtle Action Row (Replaces the old tags container) */}
+            <div className="action-row-under-chat">
+              <button
+                onClick={handleShowExample}
+                disabled={isTyping}
+                className="btn-show-example"
+              >
+                <Lightbulb size={14} />
+                <span>Show an example</span>
+              </button>
+            </div>
+
           </div>
         </div>
       </motion.div>
@@ -127,12 +171,14 @@ const LandingPage = ({ onStart, value, onChange }) => {
 
 const SimulationPage = ({ isRunning, errorMessage, onRetry, onBack, runId }) => {
   const [progress, setProgress] = useState(8);
+  const [activeAgents, setActiveAgents] = useState(0);
   const [isDecisionGreen, setIsDecisionGreen] = useState(null);
   const [showShopPulse, setShowShopPulse] = useState(false);
   const [animationStep, setAnimationStep] = useState(0); // 0: enter, 1: decide, 2: exit
 
   useEffect(() => {
     setProgress(8);
+    setActiveAgents(0); // 👈 Reset agents to 0 on a new run
   }, [runId]);
 
   useEffect(() => {
@@ -141,13 +187,19 @@ const SimulationPage = ({ isRunning, errorMessage, onRetry, onBack, runId }) => 
     }
 
     const timer = window.setInterval(() => {
+      // 1. Update Progress Bar
       setProgress((current) => {
-        if (current >= 92) {
-          return 92;
-        }
-
+        if (current >= 92) return 92;
         const increment = 1 + Math.random() * 3;
         return Math.min(current + increment, 92);
+      });
+
+      // 2. 👈 NEW: Dynamically spin up the agent count!
+      setActiveAgents((curr) => {
+        // Once it hits around ~85 agents, just fluctuate it slightly to look like a live swarm
+        if (curr >= 85) return curr + Math.floor(Math.random() * 5) - 2;
+        // Otherwise, ramp up quickly!
+        return curr + Math.floor(Math.random() * 12) + 4;
       });
     }, 450);
 
@@ -185,7 +237,7 @@ const SimulationPage = ({ isRunning, errorMessage, onRetry, onBack, runId }) => 
         setTimeout(() => setShowShopPulse(false), 800);
       }
       await new Promise(r => setTimeout(r, 1500));
-      
+
       if (!isCancelled) {
         runSequence();
       }
@@ -230,7 +282,7 @@ const SimulationPage = ({ isRunning, errorMessage, onRetry, onBack, runId }) => 
           <div className="grid-overlay"></div>
 
           <div className="stage">
-            
+
             {/* The Queue (Left) */}
             <div className="queue-line">
               <div className="queue-item"><User size={20} /></div>
@@ -257,9 +309,9 @@ const SimulationPage = ({ isRunning, errorMessage, onRetry, onBack, runId }) => 
             </div>
 
             {/* The Shop (Right) */}
-            <motion.div 
-               animate={showShopPulse ? { scale: 1.05, boxShadow: '0 0 50px rgba(74, 222, 128, 0.3)' } : { scale: 1 }}
-               className="shop-container"
+            <motion.div
+              animate={showShopPulse ? { scale: 1.05, boxShadow: '0 0 50px rgba(74, 222, 128, 0.3)' } : { scale: 1 }}
+              className="shop-container"
             >
               <div className="shop-roof">
                 {[0, 1, 2, 3, 4, 5].map(i => (
@@ -312,7 +364,7 @@ const SimulationPage = ({ isRunning, errorMessage, onRetry, onBack, runId }) => 
                 <motion.div
                   key="human-exit"
                   initial={{ x: 0, opacity: 0.5, scale: 0.8 }}
-                  animate={isDecisionGreen 
+                  animate={isDecisionGreen
                     ? { x: 320, opacity: 0, scale: 0.5 } // Enter Shop
                     : { y: 200, opacity: 0, scale: 1.2 }  // Fade Away / Fall
                   }
@@ -329,7 +381,7 @@ const SimulationPage = ({ isRunning, errorMessage, onRetry, onBack, runId }) => 
           {/* Progress Bar (Bottom) */}
           <div className="progress-container">
             <div className="progress-track">
-              <motion.div 
+              <motion.div
                 className="progress-fill"
                 animate={{ width: `${progress}%` }}
               ></motion.div>
@@ -341,11 +393,19 @@ const SimulationPage = ({ isRunning, errorMessage, onRetry, onBack, runId }) => 
           </div>
         </div>
 
+        {/* 👈 UPDATED: Dynamic Chips Array */}
         <div className="sim-chips">
           {[
-            { icon: <User size={16} />, text: "Active Agents: 1,240", color: "blue" },
-            { icon: <Zap size={16} />, text: "Processing Latency: 14ms", color: "green" },
-            { icon: <Brain size={16} />, text: "Logic: Atelier-v2", color: "blue" }
+            {
+              icon: <User size={16} />,
+              text: `Active Agents: ${activeAgents}`, // 👈 Now completely dynamic
+              color: "blue"
+            },
+            {
+              icon: <Brain size={16} />,
+              text: "Powered by: GLM-5.1", // 👈 Updated Model Name
+              color: "blue"
+            }
           ].map((chip, i) => (
             <div key={i} className="sim-chip">
               <div className={`chip-icon text-${chip.color}`}>{chip.icon}</div>
@@ -509,7 +569,7 @@ const ResultsPage = ({ scenario, simulationResult, onRunAnother }) => {
           )}
         </div>
 
-        <motion.div 
+        <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           whileHover={{ scale: 1.01, translateY: -4 }}
@@ -533,26 +593,26 @@ const ResultsPage = ({ scenario, simulationResult, onRunAnother }) => {
             <div className="verdict-meter-side">
               <div className="confidence-meter">
                 <svg className="meter-svg" viewBox="0 0 192 192">
-                  <circle 
-                    cx="96" cy="96" r="86" 
-                    fill="transparent" 
-                    stroke="var(--slate-100)" 
-                    strokeWidth="10" 
+                  <circle
+                    cx="96" cy="96" r="86"
+                    fill="transparent"
+                    stroke="var(--slate-100)"
+                    strokeWidth="10"
                   />
-                  <motion.circle 
+                  <motion.circle
                     initial={{ strokeDashoffset: 540 }}
                     animate={{ strokeDashoffset: 540 * (1 - Math.max(0, Math.min(buyRatePercent, 100)) / 100) }}
                     transition={{ duration: 1.5, ease: "easeOut", delay: 0.5 }}
-                    cx="96" cy="96" r="86" 
-                    fill="transparent" 
+                    cx="96" cy="96" r="86"
+                    fill="transparent"
                     stroke={verdictStroke}
-                    strokeWidth="10" 
-                    strokeDasharray="540" 
-                    strokeLinecap="round" 
+                    strokeWidth="10"
+                    strokeDasharray="540"
+                    strokeLinecap="round"
                   />
                 </svg>
                 <div className="meter-labels">
-                  <motion.span 
+                  <motion.span
                     initial={{ opacity: 0, scale: 0.5 }}
                     animate={{ opacity: 1, scale: 1 }}
                     transition={{ delay: 1, duration: 0.5 }}
@@ -628,7 +688,7 @@ const ResultsPage = ({ scenario, simulationResult, onRunAnother }) => {
           <div className="actions-column">
             <h3 className="column-title">Operational Readout</h3>
             <div className="actions-list">
-              <motion.div 
+              <motion.div
                 whileHover={{ scale: 1.02, x: 4 }}
                 whileTap={{ scale: 0.98 }}
                 className="action-card"
@@ -641,7 +701,7 @@ const ResultsPage = ({ scenario, simulationResult, onRunAnother }) => {
                 <p className="action-desc">{buyRatePercent}% of agents decided to buy in this scenario.</p>
               </motion.div>
 
-              <motion.div 
+              <motion.div
                 whileHover={{ scale: 1.02, x: 4 }}
                 whileTap={{ scale: 0.98 }}
                 className="action-card"
@@ -654,7 +714,7 @@ const ResultsPage = ({ scenario, simulationResult, onRunAnother }) => {
                 <p className="action-desc">Capacity check: {canHandleTraffic ? 'Traffic can be handled.' : 'Potential overload detected.'}</p>
               </motion.div>
 
-              <motion.div 
+              <motion.div
                 whileHover={{ scale: 1.02, x: 4 }}
                 whileTap={{ scale: 0.98 }}
                 className="action-card"
@@ -680,7 +740,7 @@ const ResultsPage = ({ scenario, simulationResult, onRunAnother }) => {
                   rawAgents.map((agent, idx) => {
                     const isBuy = String(agent.decision).toLowerCase() === 'buy';
                     return (
-                      <motion.div 
+                      <motion.div
                         key={idx}
                         initial={{ opacity: 0, x: 20 }}
                         animate={{ opacity: 1, x: 0 }}
@@ -695,10 +755,10 @@ const ResultsPage = ({ scenario, simulationResult, onRunAnother }) => {
                             {agent.persona || agent.reaction || 'Simulated profile'}
                           </div>
                         </div>
-                        <div style={{ 
-                          padding: '4px 10px', 
-                          borderRadius: '20px', 
-                          fontSize: '0.75rem', 
+                        <div style={{
+                          padding: '4px 10px',
+                          borderRadius: '20px',
+                          fontSize: '0.75rem',
                           fontWeight: 800,
                           backgroundColor: isBuy ? 'var(--green-50)' : 'var(--red-50)',
                           color: isBuy ? 'var(--green-600)' : 'var(--red-600)'
@@ -896,10 +956,10 @@ export default function SwarmSimulation() {
             exit={{ opacity: 0, y: -20 }}
             transition={{ duration: 0.5 }}
           >
-            <LandingPage 
-              onStart={startSimulation} 
-              value={scenarioInput} 
-              onChange={setScenarioInput} 
+            <LandingPage
+              onStart={startSimulation}
+              value={scenarioInput}
+              onChange={setScenarioInput}
             />
           </motion.div>
         ) : view === 'SIMULATING' ? (
