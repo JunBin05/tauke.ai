@@ -3285,29 +3285,27 @@ def run_swarm_simulation(payload: SwarmSimulationRequest):
 class BossContextRequest(BaseModel):
     merchant_id: str
     target_month: str
-    boss_context: str  # This will be a string combining all the Boss's answers
+    boss_context: str  
 
 @app.post("/boardroom/save-context")
-def save_boss_context(payload: BossContextRequest):
+def boardroom_save_context(payload: BossContextRequest) -> Dict[str, Any]: # 👈 FIXED: Uses the correct Pydantic model
     try:
         supabase = get_supabase_client()
-        # 1. Get the real shop ID
-        actual_merchant_id = _resolve_merchant_id(supabase, payload.merchant_id)
+        actual_shop_id = _resolve_merchant_id(supabase, payload.merchant_id.strip())
+        target_month = _normalize_report_month(payload.target_month)
 
-        # 2. Update the boss_context column in your exact table
-        res = supabase.table("monthly_summaries") \
-            .update({"boss_context": payload.boss_context}) \
-            .eq("merchant_id", actual_merchant_id) \
-            .eq("report_month", payload.target_month) \
+        # 👈 FIXED: Uses payload.boss_context to match what React sends
+        res = (
+            supabase.table("monthly_summaries")
+            .update({"boss_context": payload.boss_context}) 
+            .eq("merchant_id", actual_shop_id)
+            .eq("report_month", target_month)
             .execute()
+        )
 
-        return {
-            "status": "success", 
-            "message": "Boss context saved successfully."
-        }
-    except Exception as e:
-        print(f"Save Context Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        return {"status": "success", "message": "Context saved."}
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to save context: {exc}") from exc
     
 @app.get("/merchants/profile/{merchant_id}")
 async def get_merchant_profile(merchant_id: str):
