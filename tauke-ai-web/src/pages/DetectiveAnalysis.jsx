@@ -1,20 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import './DetectiveAnalysis.css';
+import './LoadingPage.css'; // 👈 ADD THIS LINE
 import { 
   LayoutDashboard, 
-  Users, 
-  RefreshCcw, 
-  MessageSquare, 
-  ShieldAlert, 
-  Bell, 
   Settings, 
   HelpCircle, 
-  ArrowUpRight, 
-  ArrowDownRight,
+  Bell, 
   ChevronDown,
   TrendingUp,
   AlertCircle,
+  Users,
   Package
 } from 'lucide-react';
 import { EXTERNAL_INTELLIGENCE, PERFORMANCE_SUMMARIES } from './data';
@@ -30,56 +26,16 @@ import {
   ResponsiveContainer
 } from 'recharts';
 
-// 🚀 FIX 1: Overriding the old 2024 data.js import with fresh 2026 months
 const AVAILABLE_MONTHS = [
   "Apr 2026", "Mar 2026", "Feb 2026", "Jan 2026", 
   "Dec 2025", "Nov 2025"
 ];
 
-const SidebarItem = ({ icon: Icon, label, active = false }) => (
-  <a href="#" className={`sidebar-item ${active ? 'active' : ''}`}>
-    <Icon className="w-5 h-5" />
-    <span>{label}</span>
-  </a>
-);
-
-const IntelligenceCard = ({ item }) => (
-  <motion.div
-    initial={{ opacity: 0, x: 20 }}
-    animate={{ opacity: 1, x: 0 }}
-    exit={{ opacity: 0, x: -20 }}
-    className="intelligence-content-card"
-  >
-    <div>
-      <div className="card-header" style={{ marginBottom: '12px' }}>
-        <span className="card-title" style={{ fontSize: '16px' }}>{item.title}</span>
-        <span className={`badge-trend ${item.trend === 'up' ? 'up' : 'down'}`}>
-          {item.trend === 'up' ? <ArrowUpRight className="w-3 h-3" /> : <ArrowDownRight className="w-3 h-3" />}
-          {item.percentage}
-        </span>
-      </div>
-      <div className="intelligence-progress-bar">
-        <div 
-          className="progress-fill" 
-          style={{ 
-            width: `${item.progress}%`, 
-            backgroundColor: item.trend === 'up' ? 'var(--primary)' : '#94a3b8' 
-          }} 
-        />
-      </div>
-    </div>
-    <p className="card-subtitle" style={{ fontSize: '12px', lineHeight: '1.5' }}>
-      {item.content}
-    </p>
-  </motion.div>
-);
-
 const InsightRow = ({ item }) => {
   const Icon = item.type === 'growth' ? TrendingUp : item.type === 'efficiency' ? Package : AlertCircle;
-  const typeClass = item.type;
   
   return (
-    <div className={`insight-row ${typeClass}`}>
+    <div className={`insight-row ${item.type}`}>
       <div className="insight-icon-container">
         <Icon className="w-5 h-5" />
       </div>
@@ -131,20 +87,21 @@ const PerformanceSummaryList = ({ summary, month }) => (
 export default function DetectiveAnalysis() {
   const navigate = useNavigate();
   const [selectedMonth, setSelectedMonth] = useState(AVAILABLE_MONTHS[0]);
-  const [intelligenceIndex, setIntelligenceIndex] = useState(0);
   const [isMonthDropdownOpen, setIsMonthDropdownOpen] = useState(false);
 
   const [chartData, setChartData] = useState([]);
   const [isLoadingChart, setIsLoadingChart] = useState(true);
 
-  // Dynamic card state
   const [performanceSummary, setPerformanceSummary] = useState(null);
-  const [externalIntel, setExternalIntel] = useState([]);
+  const [externalIntelligence, setExternalIntelligence] = useState([]);
   const [isLoadingCards, setIsLoadingCards] = useState(true);
+
+  // --- TIMER STATE FOR ROTATING CARDS ---
+  const [activeIntelIndex, setActiveIntelIndex] = useState(0);
 
   const ownerId = localStorage.getItem("owner_id");
 
-  // 🚀 Month Translator helper
+  // Format month for backend API calls
   const getApiMonth = (displayMonth) => {
     try {
       const [monthName, year] = displayMonth.split(" ");
@@ -157,9 +114,26 @@ export default function DetectiveAnalysis() {
     }
   };
 
+  // --- AUTO-ROTATE EFFECT ---
+  useEffect(() => {
+    // Only run the timer if we have more than 1 card to show
+    if (!externalIntelligence || externalIntelligence.length <= 1) return;
+
+    const timer = setInterval(() => {
+      setActiveIntelIndex((prevIndex) => (prevIndex + 1) % externalIntelligence.length);
+    }, 5000); // Switches every 5 seconds
+
+    return () => clearInterval(timer);
+  }, [externalIntelligence]);
+
+  // Grab the active card to render
+  const currentIntel = externalIntelligence && externalIntelligence.length > 0 
+      ? externalIntelligence[activeIntelIndex] 
+      : null;
+
   useEffect(() => {
     const apiMonth = getApiMonth(selectedMonth);
-    // Save selected month globally so War Room / Roadmap use the same month
+    // Save selected month globally so War Room uses the exact same data
     localStorage.setItem("target_month", apiMonth);
 
     if (!ownerId) {
@@ -168,20 +142,23 @@ export default function DetectiveAnalysis() {
       return;
     }
 
-    // Fetch chart trend
+    // 1. Fetch Area Chart Trend Data
     const fetchTrend = async () => {
       setIsLoadingChart(true);
       try {
         const response = await fetch(`${API_BASE_URL}/boardroom/trend/${ownerId}/${apiMonth}`);
         const data = await response.json();
+        
         if (data.status === "success") {
           const [monthName, yearName] = selectedMonth.split(" ");
           const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
           const monthIndex = months.indexOf(monthName);
           const daysInMonth = new Date(parseInt(yearName), monthIndex + 1, 0).getDate();
+          
           const fullMonthData = Array.from({ length: daysInMonth }, (_, i) => ({
             name: `${i + 1} ${monthName}`, revenue: 0
           }));
+          
           if (data.trend_data && Array.isArray(data.trend_data)) {
             data.trend_data.forEach(realDay => {
               const index = fullMonthData.findIndex(d => d.name === realDay.name);
@@ -200,7 +177,7 @@ export default function DetectiveAnalysis() {
       }
     };
 
-    // Fetch AI detective cards
+    // 2. Fetch AI Summary & External Signals
     const fetchDetectiveCards = async () => {
       setIsLoadingCards(true);
       try {
@@ -210,10 +187,15 @@ export default function DetectiveAnalysis() {
           body: JSON.stringify({ merchant_id: ownerId, target_month: apiMonth })
         });
         const json = await response.json();
+        
         if (json.status === "success" && json.data) {
-          if (json.data.performance_summary) setPerformanceSummary(json.data.performance_summary);
+          if (json.data.performance_summary) {
+            setPerformanceSummary(json.data.performance_summary);
+          }
           if (json.data.external_intelligence && json.data.external_intelligence.length > 0) {
-            setExternalIntel(json.data.external_intelligence);
+            setExternalIntelligence(json.data.external_intelligence);
+          } else {
+            setExternalIntelligence([]);
           }
         }
       } catch (err) {
@@ -226,6 +208,23 @@ export default function DetectiveAnalysis() {
     fetchTrend();
     fetchDetectiveCards();
   }, [selectedMonth, ownerId]);
+
+  if (isLoadingChart || isLoadingCards) {
+    return (
+      <div className="loading-page" role="status" aria-live="polite">
+        <div className="loading-glow" aria-hidden="true" />
+        <main className="loading-content">
+          <p className="loading-brand">Tauke.AI</p>
+          <div className="loading-spinner-wrap" aria-hidden="true">
+            <div className="loading-spinner" />
+            <div className="loading-spinner-center" />
+          </div>
+          <h1 className="loading-title">Generating Dashboard...</h1>
+          <p className="loading-subtitle">Fusing your context with real-time market signals.</p>
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="dashboard-container">
@@ -250,13 +249,15 @@ export default function DetectiveAnalysis() {
             <div className="page-header">
               <div className="badge-step">
                 <div className="pulse-dot" />
-                Step 4: Detective Agent
+                Detective Agent
               </div>
               <h2 className="page-title">Analysis</h2>
               <p className="page-subtitle">Identifying patterns and anomalies in your business data.</p>
             </div>
 
             <div className="bento-grid">
+              
+              {/* --- MAIN CHART CARD --- */}
               <div className="card main-chart-card">
                 <div className="card-header">
                   <div>
@@ -273,27 +274,33 @@ export default function DetectiveAnalysis() {
                       <ChevronDown style={{ width: '16px', transition: 'transform 0.3s', transform: isMonthDropdownOpen ? 'rotate(180deg)' : 'none' }} />
                     </button>
                     
-                    {isMonthDropdownOpen && (
-                      <div className="dropdown-panel">
-                        {AVAILABLE_MONTHS.map(month => (
-                          <button
-                            key={month}
-                            className={`dropdown-item ${selectedMonth === month ? 'active' : ''}`}
-                            onClick={() => {
-                              setSelectedMonth(month);
-                              setIsMonthDropdownOpen(false);
-                            }}
-                          >
-                            {month}
-                          </button>
-                        ))}
-                      </div>
-                    )}
+                    <AnimatePresence>
+                      {isMonthDropdownOpen && (
+                        <motion.div 
+                          initial={{ opacity: 0, y: -10 }} 
+                          animate={{ opacity: 1, y: 0 }} 
+                          exit={{ opacity: 0, y: -10 }} 
+                          className="dropdown-panel"
+                        >
+                          {AVAILABLE_MONTHS.map(month => (
+                            <button
+                              key={month}
+                              className={`dropdown-item ${selectedMonth === month ? 'active' : ''}`}
+                              onClick={() => {
+                                setSelectedMonth(month);
+                                setIsMonthDropdownOpen(false);
+                              }}
+                            >
+                              {month}
+                            </button>
+                          ))}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
                   </div>
                 </div>
 
                 <div className="chart-wrapper">
-                  {/* 🚀 FIX 4: Proper UI handling for loading, empty, and errors! */}
                   {!ownerId ? (
                     <div style={{ display: 'flex', height: '100%', alignItems: 'center', justifyContent: 'center', color: '#94a3b8', fontSize: '14px', fontWeight: '500' }}>
                       Please log in to view analytics.
@@ -328,10 +335,10 @@ export default function DetectiveAnalysis() {
                       </AreaChart>
                     </ResponsiveContainer>
                   )}
-                  {/* 🚀 FIX 5: Hardcoded anomaly alert removed from here! */}
                 </div>
               </div>
 
+              {/* --- INTELLIGENCE CAROUSEL CARD --- */}
               <div className="intelligence-card">
                 <div className="intelligence-header">
                   <div className="intelligence-icon">
@@ -345,37 +352,80 @@ export default function DetectiveAnalysis() {
                     <div style={{ display: 'flex', height: '100%', alignItems: 'center', justifyContent: 'center', color: '#0058bc', fontSize: '13px', fontWeight: 600 }}>
                       AI is analyzing your market signals...
                     </div>
-                  ) : externalIntel.length > 0 ? (
-                    <>
-                      <AnimatePresence mode="wait">
-                        <IntelligenceCard key={externalIntel[intelligenceIndex]?.id || intelligenceIndex} item={externalIntel[intelligenceIndex] || externalIntel[0]} />
-                      </AnimatePresence>
-                      <div className="dot-carousel">
-                        {externalIntel.map((_, idx) => (
-                          <div key={idx} className={`dot ${idx === intelligenceIndex ? 'active' : ''}`}
-                            onClick={() => setIntelligenceIndex(idx)} style={{ cursor: 'pointer' }} />
-                        ))}
-                      </div>
-                    </>
                   ) : (
-                    <AnimatePresence mode="wait">
-                      <IntelligenceCard key={EXTERNAL_INTELLIGENCE[intelligenceIndex].id} item={EXTERNAL_INTELLIGENCE[intelligenceIndex]} />
-                    </AnimatePresence>
+                    <div className="intelligence-section">
+                      {currentIntel ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                          
+                          {/* Animated Rotating Card */}
+                          <motion.div
+                            key={activeIntelIndex}
+                            initial={{ opacity: 0, x: 20 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            transition={{ duration: 0.4 }}
+                            style={{ padding: '20px', backgroundColor: '#ffffff', borderRadius: '12px', border: '1px solid #E2E8F0', boxShadow: '0 2px 4px rgba(0,0,0,0.02)' }}
+                          >
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <span className="material-symbols-outlined" style={{ color: 'var(--primary)' }}>radar</span>
+                                <h4 style={{ margin: 0, fontSize: '0.95rem', fontWeight: '700' }}>{currentIntel.title}</h4>
+                              </div>
+                              <span style={{ 
+                                fontSize: '0.8rem', 
+                                fontWeight: '700', 
+                                color: currentIntel.trend === 'up' ? 'var(--green-600, #16a34a)' : 'var(--red-600, #dc2626)',
+                                backgroundColor: currentIntel.trend === 'up' ? '#f0fdf4' : '#fef2f2',
+                                padding: '4px 8px', borderRadius: '20px' 
+                              }}>
+                                {currentIntel.percentage} {currentIntel.trend === 'up' ? '↑' : '↓'}
+                              </span>
+                            </div>
+                            
+                            <p style={{ margin: 0, fontSize: '0.85rem', color: '#475569', lineHeight: '1.5' }}>
+                              {currentIntel.content}
+                            </p>
+                          </motion.div>
+
+                          {/* Navigation Dots */}
+                          <div style={{ display: 'flex', justifyContent: 'center', gap: '6px', marginTop: '4px' }}>
+                            {externalIntelligence.map((_, idx) => (
+                              <div 
+                                key={idx} 
+                                onClick={() => setActiveIntelIndex(idx)}
+                                style={{ 
+                                  width: '8px', height: '8px', borderRadius: '50%', 
+                                  backgroundColor: activeIntelIndex === idx ? 'var(--primary, #0058bc)' : '#cbd5e1',
+                                  transition: 'background-color 0.3s ease',
+                                  cursor: 'pointer'
+                                }}
+                              />
+                            ))}
+                          </div>
+
+                        </div>
+                      ) : (
+                        <div style={{ padding: '20px', textAlign: 'center', color: '#94a3b8', border: '1px dashed #cbd5e1', borderRadius: '12px' }}>
+                          No significant external signals detected this month.
+                        </div>
+                      )}
+                    </div>
                   )}
                 </div>
 
+                {/* Subtext Footer */}
                 <div style={{ marginTop: '32px', backgroundColor: 'rgba(255,255,255,0.5)', padding: '16px', borderRadius: '12px', border: '1px solid #fff' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', fontWeight: '900', color: '#94a3b8', textTransform: 'uppercase', marginBottom: '8px' }}>
                     Industry Pulse <span style={{ color: 'var(--primary)' }}>Real-time</span>
                   </div>
-                  <p style={{ fontSize: '12px', color: 'var(--text-muted)', margin: 0, fontWeight: '500' }}>
-                    {externalIntel.length > 0
-                      ? `Tracking ${externalIntel.length} active market signal${externalIntel.length > 1 ? 's' : ''} in your area.`
-                      : 'Tracking 12 local competitors and 5 global brands in your market segment.'}
+                  <p style={{ fontSize: '12px', color: '#64748b', margin: 0, fontWeight: '500' }}>
+                    {externalIntelligence.length > 0
+                      ? `Tracking ${externalIntelligence.length} active market signal${externalIntelligence.length > 1 ? 's' : ''} in your area.`
+                      : 'Tracking local competitors and macro trends in your market segment.'}
                   </p>
                 </div>
               </div>
 
+              {/* --- PERFORMANCE SUMMARY LIST --- */}
               <PerformanceSummaryList
                 summary={performanceSummary ?? (PERFORMANCE_SUMMARIES[selectedMonth] || {
                   headline: isLoadingCards ? 'AI is generating your performance summary...' : `Operating Report: ${selectedMonth}`,
@@ -388,20 +438,57 @@ export default function DetectiveAnalysis() {
             </div>
           </div>
 
-          <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '24px 0 8px 0' }}>
-            <button
-              onClick={() => navigate('/ai-debate')}
-              style={{
-                display: 'flex', alignItems: 'center', gap: '8px',
-                padding: '12px 24px', borderRadius: '12px',
-                background: 'var(--primary, #0058bc)', color: '#fff',
-                border: 'none', fontSize: '15px', fontWeight: 700,
-                cursor: 'pointer'
-              }}
-            >
-              <span>Continue to War Room</span>
-              <span className="material-symbols-outlined" style={{ fontSize: '20px' }} aria-hidden="true">arrow_forward</span>
-            </button>
+          {/* --- NEXT STEP CTA SECTION --- */}
+          <div style={{
+            marginTop: '40px',
+            marginBottom: '24px',
+            padding: '24px',
+            backgroundColor: '#f8fafc',
+            border: '1px solid #e2e8f0',
+            borderRadius: '16px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '20px'
+          }}>
+            <div style={{ display: 'flex', gap: '16px', alignItems: 'flex-start' }}>
+              <div style={{
+                backgroundColor: '#eff6ff',
+                color: 'var(--primary, #0058bc)',
+                padding: '12px',
+                borderRadius: '12px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}>
+                <Users className="w-8 h-8" />
+              </div>
+              <div style={{ flex: 1 }}>
+                <h3 style={{ margin: '0 0 8px 0', fontSize: '18px', fontWeight: '700', color: '#0f172a' }}>
+                  Next Step: Initiate the AI War Room
+                </h3>
+                <p style={{ margin: 0, fontSize: '14.5px', color: '#475569', lineHeight: '1.6' }}>
+                  You now have the complete picture: internal sales diagnostics, your operational context, and real-time market signals. 
+                  Proceed to the War Room to watch your <strong>AI CMO, COO, and CFO</strong> debate these findings and synthesize a bulletproof recovery strategy.
+                </p>
+              </div>
+            </div>
+            
+            <div style={{ display: 'flex', justifyContent: 'flex-end', borderTop: '1px solid #e2e8f0', paddingTop: '20px' }}>
+              <button
+                onClick={() => navigate('/ai-debate')}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: '8px',
+                  padding: '14px 28px', borderRadius: '12px',
+                  background: 'var(--primary, #0058bc)', color: '#fff',
+                  border: 'none', fontSize: '15px', fontWeight: 700,
+                  cursor: 'pointer',
+                  boxShadow: '0 4px 6px -1px rgba(0, 88, 188, 0.25)'
+                }}
+              >
+                <span>Watch AI Agents Debate</span>
+                <span className="material-symbols-outlined" style={{ fontSize: '20px' }} aria-hidden="true">forum</span>
+              </button>
+            </div>
           </div>
         </main>
       </div>

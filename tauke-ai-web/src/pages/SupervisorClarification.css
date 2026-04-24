@@ -5,6 +5,110 @@
     box-sizing: border-box;
 }
 
+/* Container for all the options */
+.answer-options-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-top: 16px;
+    margin-bottom: 24px;
+}
+
+/* The Clickable Card */
+.answer-card {
+    display: flex;
+    align-items: center;
+    padding: 16px 20px;
+    background: #ffffff;
+    border: 2px solid #e2e8f0;
+    /* Soft gray border */
+    border-radius: 12px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.answer-card:hover {
+    border-color: #cbd5e1;
+    background: #f8fafc;
+}
+
+/* The ACTIVE / SELECTED State */
+.answer-card.is-selected {
+    border-color: #0058bc;
+    /* Tauke.AI Primary Blue */
+    background: #eff6ff;
+    /* Soft blue background */
+    box-shadow: 0 4px 12px rgba(0, 88, 188, 0.08);
+}
+
+/* Hide the ugly default radio button */
+.hidden-radio {
+    position: absolute;
+    opacity: 0;
+    cursor: pointer;
+}
+
+/* Custom Fake Radio Circle */
+.custom-radio-circle {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    border: 2px solid #94a3b8;
+    margin-right: 16px;
+    position: relative;
+    transition: all 0.2s ease;
+    flex-shrink: 0;
+}
+
+/* The blue dot inside the circle when selected */
+.answer-card.is-selected .custom-radio-circle {
+    border-color: #0058bc;
+}
+
+.answer-card.is-selected .custom-radio-circle::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #0058bc;
+}
+
+/* The text inside the card */
+.answer-text {
+    font-size: 15px;
+    font-weight: 500;
+    color: #1a1c1d;
+}
+
+.answer-card.is-selected .answer-text {
+    color: #0058bc;
+    font-weight: 600;
+}
+
+/* Premium Text Area */
+.premium-textarea {
+    width: 100%;
+    min-height: 120px;
+    padding: 16px;
+    border: 2px solid #e2e8f0;
+    border-radius: 12px;
+    font-family: 'Inter', sans-serif;
+    font-size: 14px;
+    color: #1a1c1d;
+    resize: vertical;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.premium-textarea:focus {
+    outline: none;
+    border-color: #0058bc;
+    box-shadow: 0 0 0 4px rgba(0, 88, 188, 0.1);
+}
+
 .clarification-page {
     min-height: 100vh;
     display: flex;

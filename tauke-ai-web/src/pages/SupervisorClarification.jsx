@@ -12,9 +12,16 @@ const navItems = [
     { label: "Strategy Synthesis", icon: "hub", to: "/final-synthesis" }
 ];
 
+
+
 export default function SupervisorClarification() {
     const navigate = useNavigate();
+    useEffect(() => {
+        // Clear old answers when starting a new session
+        localStorage.removeItem("boss_answers");
+    }, []);
     const [notes, setNotes] = useState("");
+    const [selectedOption, setSelectedOption] = useState("");
     const [questions, setQuestions] = useState([]);
     const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
     const [isLoading, setIsLoading] = useState(true);
@@ -25,84 +32,130 @@ export default function SupervisorClarification() {
     const targetMonth = localStorage.getItem("target_month") || "2026-04";
 
     useEffect(() => {
-        const fetchQuestions = async () => {
+        // We no longer need to fetch here! The LoadingPage did it for us.
+        const loadSavedData = () => {
             try {
-                const response = await fetch(`${API_BASE_URL}/boardroom/start`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                        merchant_id: ownerId,
-                        target_month: targetMonth
-                    })
-                });
-                const data = await response.json();
+                // 1. Grab the questions the Loading Page saved
+                const savedQuestionsStr = localStorage.getItem("boardroom_questions");
+                if (savedQuestionsStr) {
+                    const parsedQuestions = JSON.parse(savedQuestionsStr);
+                    setQuestions(parsedQuestions);
+                }
 
-                if (data.analyst_questions) {
-                    const questionLines = data.analyst_questions
-                        .split("\n")
-                        .map(q => q.replace(/^\d+[\.\)\s]+/, "").trim())
-                        .filter(q => q.length > 5);
+                // 2. Safely parse Historical Context
+                const finTrendStr = localStorage.getItem("boardroom_financial_trend");
+                if (finTrendStr) {
+                    const finTrend = JSON.parse(finTrendStr);
+                    
+                    // Target the nested total_revenue. Since there is no previous month in the DB output, default it to 0 for now.
+                    const currRevenue = Number(finTrend.target_month?.total_revenue) || 0;
+                    const prevRevenue = 0; // You will need to calculate this on the backend later if you want the % delta
 
-                    setQuestions(questionLines);
-                    localStorage.setItem("boardroom_questions", JSON.stringify(questionLines));
-                    localStorage.setItem("boardroom_financial_context", JSON.stringify(data.financial_context || {}));
-                    localStorage.setItem("boardroom_financial_trend", JSON.stringify(data.financial_trend || {}));
-                    localStorage.setItem("boardroom_diagnostic_patterns", JSON.stringify(data.diagnostic_patterns || {}));
-
-                    // Parse dynamic context cards from financial data
-                    const diagPatterns = data.diagnostic_patterns || {};
-                    const finTrend = data.financial_trend || {};
-
-                    // Build Historical Context from real data
-                    const prevRevenue = finTrend.previous_month_revenue;
-                    const currRevenue = finTrend.current_month_revenue;
-                    if (prevRevenue && currRevenue) {
+                    if (prevRevenue > 0 && currRevenue > 0) {
                         const delta = ((currRevenue - prevRevenue) / prevRevenue * 100).toFixed(1);
                         const direction = delta >= 0 ? "increase" : "drop";
                         setHistoricalContext(`Revenue showed a ${Math.abs(delta)}% ${direction} compared to the previous month (RM${Math.round(prevRevenue).toLocaleString()} → RM${Math.round(currRevenue).toLocaleString()}).`);
-                    } else if (diagPatterns.revenue_trend) {
-                        setHistoricalContext(`Revenue trend: ${diagPatterns.revenue_trend}`);
+                    } else if (currRevenue > 0) {
+                        setHistoricalContext(`Current month revenue is RM${Math.round(currRevenue).toLocaleString()}. (No historical data from last month to compare against).`);
+                    } else {
+                        setHistoricalContext("Historical revenue patterns are currently insufficient for a trend comparison.");
                     }
+                }
 
-                    // Build Supply Signal from diagnostic patterns
-                    const topItems = diagPatterns.top_selling_items || diagPatterns.declining_items || [];
+                // 3. Safely parse Supply Signals with a guaranteed fallback
+                const diagPatternsStr = localStorage.getItem("boardroom_diagnostic_patterns");
+                if (diagPatternsStr) {
+                    const diagPatterns = JSON.parse(diagPatternsStr);
+
+                    // Use the actual keys generated by your data
+                    const topItems = diagPatterns.top_3_anchors || diagPatterns.new_arrivals || [];
+
                     if (Array.isArray(topItems) && topItems.length > 0) {
-                        setExternalSignal(`Top performing item: "${topItems[0]}" — monitor stock levels to prevent a supply gap during recovery.`);
+                        // Handle both plain strings (from new_arrivals) and objects (from top_3_anchors)
+                        const firstItem = topItems[0];
+                        const itemName = typeof firstItem === 'string' ? firstItem : firstItem.item_name;
+                        
+                        setExternalSignal(`Top performing item: "${itemName}" — monitor stock levels to prevent a supply gap.`);
                     } else if (diagPatterns.alert) {
                         setExternalSignal(diagPatterns.alert);
+                    } else {
+                        setExternalSignal("Inventory and supply chain levels appear stable based on current data anomalies.");
                     }
                 }
             } catch (err) {
-                console.error("Failed to fetch boardroom questions:", err);
+                console.error("Failed to parse saved boardroom data:", err);
             } finally {
+                // Instantly turn off the loading skeleton!
                 setIsLoading(false);
             }
         };
-        fetchQuestions();
+
+        loadSavedData();
     }, []);
 
     const handleNext = () => {
         if (currentQuestionIndex < questions.length - 1) {
             setCurrentQuestionIndex(prev => prev + 1);
             setNotes("");
+            setSelectedOption(""); // 👈 Clear the button selection!
         }
     };
 
-    const handleSubmit = (e) => {
+    const handleSubmit = async (e) => {
         e.preventDefault();
+
         const existingAnswers = localStorage.getItem("boss_answers") || "";
-        const currentQ = questions[currentQuestionIndex] || "General context";
+        const currentQObj = questions[currentQuestionIndex] || {};
+        const currentQText = currentQObj.text || "General context";
+
+        // Combine the button choice with any typed notes
+        let finalAnswer = selectedOption;
+        if (selectedOption === "Other" || notes.trim() !== "") {
+            finalAnswer += ` - ${notes}`;
+        }
+
         const combined = existingAnswers
-            ? `${existingAnswers}\nQ: ${currentQ}\nA: ${notes}`
-            : `Q: ${currentQ}\nA: ${notes}`;
+            ? `${existingAnswers}\nQ: ${currentQText}\nA: ${finalAnswer}`
+            : `Q: ${currentQText}\nA: ${finalAnswer}`;
+
+        // 2. Save progress locally so it builds up question by question
         localStorage.setItem("boss_answers", combined);
 
+        // 3. Check if there are more questions to answer
         if (currentQuestionIndex < questions.length - 1) {
-            handleNext();
+            handleNext(); // Move to the next question in the UI
         } else {
-            navigate("/ai-debate");
+            // 4. THIS IS THE LAST QUESTION! Send everything to the backend.
+            const ownerId = localStorage.getItem("owner_id");
+            const targetMonth = localStorage.getItem("target_month"); // Saved earlier
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/boardroom/save-context`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        merchant_id: ownerId,
+                        target_month: targetMonth,
+                        boss_context: combined // Send the fully combined Q&A string!
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.status === "success") {
+                    // 5. Successfully saved to DB! Now we enter the War Room.
+                    navigate('/detective-analysis');
+                } else {
+                    alert("Failed to save answers to database.");
+                }
+            } catch (error) {
+                console.error("Error saving context:", error);
+                alert("Network error while saving context.");
+            }
         }
     };
+
+
 
     const currentQuestion = questions[currentQuestionIndex];
     const isLastQuestion = currentQuestionIndex === questions.length - 1;
@@ -113,7 +166,6 @@ export default function SupervisorClarification() {
             <main className="clarification-main">
                 <div className="clarification-shell">
                     <header className="clarification-header">
-                        <p className="step-label">Step 5 / Supervisor Agent</p>
                         <h2 className="page-title">Clarification Request</h2>
                         <p className="page-subtitle">The AI needs your confirmation before proceeding with strategic synthesis.</p>
                     </header>
@@ -132,35 +184,68 @@ export default function SupervisorClarification() {
                         </div>
 
                         <h3 className="question-title">
-                            {isLoading ? "AI is analyzing your data..." : currentQuestion ?? "Analyzing anomalies in your data..."}
+                            {isLoading ? "AI is analyzing your data..." : currentQuestion?.text ?? "Analyzing anomalies in your data..."}
                         </h3>
                         <p className="question-subtitle">Your confirmation improves forecasting accuracy and aligns strategic next actions.</p>
 
                         <form className="clarification-form" onSubmit={handleSubmit}>
-                            <div className="response-option response-other" style={{ width: '100%', cursor: 'default' }}>
-                                <div className="response-card" style={{ padding: '24px' }}>
-                                    <div className="response-copy" style={{ width: '100%' }}>
-                                        <h4>Your Context</h4>
-                                        <p>Type your answer to the AI's question above.</p>
-                                        <div className="response-extra" style={{ paddingLeft: '0', marginTop: '16px' }}>
-                                            <textarea
-                                                rows="4"
-                                                placeholder="Provide your answer here..."
-                                                value={notes}
-                                                onChange={(event) => setNotes(event.target.value)}
-                                                style={{ width: '100%', padding: '12px', border: '1px solid #E2E8F0', borderRadius: '8px', fontSize: '15px' }}
-                                            />
+                            <div className="response-card" style={{ padding: '24px', width: '100%', marginBottom: '24px', display: 'block', cursor: 'default' }}>
+                                <h4>Select your response:</h4>
+
+                                {/* 1. Render the LLM generated options as premium interactive cards */}
+                                <div className="answer-options-grid">
+                                    {currentQuestion?.options?.map((opt, idx) => (
+                                        <div key={idx} style={{ display: 'flex', flexDirection: 'column' }}>
+                                            <label
+                                                className={`answer-card ${selectedOption === opt ? 'is-selected' : ''}`}
+                                            >
+                                                <input
+                                                    type="radio"
+                                                    name="boss_answer"
+                                                    value={opt}
+                                                    checked={selectedOption === opt}
+                                                    onChange={(e) => setSelectedOption(e.target.value)}
+                                                    className="hidden-radio"
+                                                />
+                                                <div className="custom-radio-circle"></div>
+                                                <span className="answer-text">{opt}</span>
+                                            </label>
+
+                                            {/* Inline Text Area specifically for "Other" directly below the card */}
+                                            {selectedOption === opt && opt === "Other" && (
+                                                <div style={{ marginTop: '12px', animation: 'fadeIn 0.2s ease-in-out' }}>
+                                                    <textarea
+                                                        className="premium-textarea"
+                                                        placeholder="Please specify..."
+                                                        value={notes}
+                                                        onChange={(event) => setNotes(event.target.value)}
+                                                        style={{ minHeight: '90px' }}
+                                                        autoFocus
+                                                    />
+                                                </div>
+                                            )}
                                         </div>
-                                    </div>
+                                    ))}
                                 </div>
+
+                                {/* 2. Fallback if no options are returned by LLM */}
+                                {(!currentQuestion?.options || currentQuestion.options.length === 0) && (
+                                    <div style={{ marginTop: '16px' }}>
+                                        <p style={{ fontSize: '13px', color: '#64748b', marginBottom: '8px', fontWeight: 600 }}>Please specify:</p>
+                                        <textarea
+                                            className="premium-textarea"
+                                            placeholder="Type your context here..."
+                                            value={notes}
+                                            onChange={(event) => setNotes(event.target.value)}
+                                        />
+                                    </div>
+                                )}
                             </div>
 
                             <div className="clarification-actions">
-                                <button type="button" className="secondary-button" onClick={() => navigate("/ai-debate")}>
-                                    Skip to War Room
-                                </button>
                                 <button type="submit" className="primary-button" disabled={isLoading}>
-                                    <span>{isLastQuestion ? "Continue to War Room" : "Next Question"}</span>
+                                    {/* 👇 CHANGE THIS LABEL */}
+                                    <span>{isLastQuestion ? "View Analysis Dashboard" : "Next Question"}</span>
                                     <span className="material-symbols-outlined" aria-hidden="true">arrow_forward</span>
                                 </button>
                             </div>
