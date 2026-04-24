@@ -68,7 +68,7 @@ Tauke.AI includes a multi-stage strategy workflow:
 - **Multi-Agent Debate** — multiple AI personas evaluate different recovery or growth strategies from different business perspectives
 - **Final Synthesis** — the system consolidates those perspectives into a recommended strategic direction
 
-### 🧪 MicroFish Swarm Simulation (Sandbox)
+### 🧪 MiroFish Swarm Simulation (Sandbox)
 Test business ideas before committing real budget. The system simulates whether a promotion or business decision is likely to improve business outcomes based on internal data and external signals.
 
 ### 🗺️ Dynamic Execution Roadmaps
