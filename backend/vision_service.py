@@ -1420,20 +1420,32 @@ def get_details_from_place_id(place_id: str):
         return None, None
     
 def _fetch_merchant_profile(supabase: Client, merchant_id: str) -> str:
+    # Query using the exact schema columns
     res = (
         supabase.table("merchants")
-        .select("merchant_profile")
-        .eq("id", merchant_id)
+        .select("name, type, address")
+        .eq("shop_id", merchant_id) # 👈 Using your actual Primary Key
         .limit(1)
         .execute()
     )
 
     if not res.data:
-        return ""
-    return str(res.data[0].get("merchant_profile") or "").strip()
+        return "Malaysia"
+        
+    row = res.data[0]
+    name = row.get("name") or "F&B Business"
+    b_type = row.get("type") or "Store"
+    address = row.get("address") or "Malaysia"
+    
+    # Combine them so the LLM gets the full context!
+    return f"{name} ({b_type}) | Location: {address}"
 
 
 def _extract_location_hint(merchant_profile: str) -> str:
+    # Safely extract just the address for the Weather/Places APIs
+    if "Location: " in merchant_profile:
+        return merchant_profile.split("Location: ")[-1].strip()
+        
     if merchant_profile.strip():
         return merchant_profile
     return "Malaysia"
@@ -1630,8 +1642,8 @@ def _fetch_external_signals(supabase: Client, merchant_id: str, merchant_profile
     places = _fetch_places_signal(merchant_profile)
     weather = _fetch_weather_signal(merchant_profile, target_month)
     
-    # 2. Fetch the exact Lat/Lon for this merchant from the database
-    res = supabase.table("merchants").select("latitude, longitude").eq("owner_id", merchant_id).limit(1).execute()
+    # 👇 FIXED: Changed "owner_id" to "shop_id" based on your schema
+    res = supabase.table("merchants").select("latitude, longitude").eq("shop_id", merchant_id).limit(1).execute()
     
     traffic = {"status": "skipped", "reason": "No coordinates"}
     foot_traffic = {"status": "skipped", "reason": "No coordinates"}
@@ -1648,8 +1660,8 @@ def _fetch_external_signals(supabase: Client, merchant_id: str, merchant_profile
         "web": web,
         "places": places,
         "weather": weather,
-        "traffic": traffic,           # 👈 NEW!
-        "foot_traffic": foot_traffic, # 👈 NEW!
+        "traffic": traffic,
+        "foot_traffic": foot_traffic,
     }
 
 def _detective_cards_prompt(
@@ -1689,18 +1701,23 @@ def _detective_cards_prompt(
 
 def _analyst_interrogation_prompt(financial_context: Dict[str, Any]) -> Tuple[str, str]:
     system_prompt = (
-        "You are an F&B Analyst. Overall Revenue shifted from [Baseline Revenue] to [Target Revenue]. "
-        "Here is the underlying 12-point diagnostic JSON explaining the shifts. Look at this data. "
-        "Do not generate a theory yet. Your job is to interrogate the Boss to get real-world context. "
-        "Generate up to 5 critical, direct questions (preferably Yes/No or short answer) for the Boss. "
-        "Rule 1: You MUST always ask if any specific marketing campaigns, promotions, or discounts were run during the target month. "
-        "Rule 2: Base the remaining questions on the largest anomalies in the JSON (e.g., sudden drops in a specific item, or massive shifts in time-of-day traffic). "
-        "Rule 3: Keep the questions concise. Do not overwhelm the Boss."
+        "You are an F&B Analyst. Look at the diagnostic JSON explaining the revenue shifts. "
+        "Generate up to 3 critical questions for the Boss to get real-world context.\n"
+        "Rule 1: Always ask if any specific marketing campaigns or promotions were run.\n"
+        "Rule 2: Base the remaining questions on the largest anomalies in the JSON.\n"
+        "Rule 3: For EACH question, provide 2 to 3 highly likely multiple-choice options based on the data, plus ALWAYS include 'Other' as the final option.\n\n"
+        "OUTPUT ONLY PURE JSON in this exact structure (no markdown):\n"
+        "[\n"
+        "  {\n"
+        "    \"text\": \"Did you run any promotions during the weekend of the 15th?\",\n"
+        "    \"options\": [\"Yes, Buy-1-Free-1\", \"Yes, generic discount\", \"No promotions run\", \"Other\"]\n"
+        "  }\n"
+        "]"
     )
     user_prompt = (
         "Combined Financial Context JSON:\n"
         f"{json.dumps(financial_context, indent=2)}\n\n"
-        "Return plain text with numbered questions only."
+        "Return pure JSON array."
     )
     return system_prompt, user_prompt
 
@@ -2112,40 +2129,47 @@ def boardroom_detective_cards(payload: DetectiveCardsRequest) -> Dict[str, Any]:
             "status": "success",
             "data": parsed_cards
         }
+    except HTTPException:
+        raise # 👈 Let normal 404s pass through!
     except Exception as exc:
+        print(f"🚨 Detective Cards CRASHED: {exc}") # 👈 Print the exact error!
         raise HTTPException(status_code=500, detail=str(exc))
 
 
 @app.post("/boardroom/start")
 def boardroom_start(payload: BoardroomStartRequest) -> Dict[str, Any]:
     try:
-        merchant_id = payload.merchant_id.strip()
+        frontend_id = payload.merchant_id.strip()
         target_month = _normalize_report_month(payload.target_month)
 
         supabase = get_supabase_client()
         llm_client = get_zhipu_client()
 
-        financial_context = _build_financial_context_payload(supabase, merchant_id, target_month)
+        # 👈 THE FIX: Translate owner_id into the real shop_id!
+        actual_shop_id = _resolve_merchant_id(supabase, frontend_id)
+
+        # 👈 THE FIX: Pass actual_shop_id to get the REAL data, not zeros!
+        financial_context = _build_financial_context_payload(supabase, actual_shop_id, target_month)
+        
         financial_trend = financial_context.get("financial_trend", {})
         diagnostic_json = financial_context.get("diagnostic_patterns", {})
 
         sys_prompt, usr_prompt = _analyst_interrogation_prompt(financial_context)
-        analyst_questions = _call_text_llm(llm_client, sys_prompt, usr_prompt, temperature=0.1)
+        raw_questions = _call_text_llm(llm_client, sys_prompt, usr_prompt, temperature=0.1)
+        parsed_questions = _parse_model_json(raw_questions, "Analyst Questions", required_kind="array")
 
         return {
-            "merchant_id": merchant_id,
+            "merchant_id": frontend_id,
             "target_month": target_month,
             "financial_context": financial_context,
-            # Backward compatibility for existing frontend consumers.
             "financial_comparison": financial_trend,
             "financial_trend": financial_trend,
             "diagnostic_patterns": diagnostic_json,
-            "analyst_questions": analyst_questions,
+            "analyst_questions": parsed_questions,
         }
-    except HTTPException:
-        raise
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Boardroom start failed: {exc}") from exc
+        print(f"Boardroom Start Crash: {exc}")
+        raise HTTPException(status_code=502, detail=f"Boardroom start failed: {exc}")
 
 def _resolve_merchant_id(supabase, frontend_id: str) -> str:
     # 1. Check if the frontend sent the Auth 'owner_id'
@@ -2296,19 +2320,23 @@ class BoardroomDebateRequest(BaseModel):
 @app.post("/boardroom/debate")
 def boardroom_debate(payload: BoardroomDebateRequest) -> Dict[str, Any]:
     try:
-        merchant_id = payload.merchant_id.strip()
+        frontend_id = payload.merchant_id.strip()
         target_month = _normalize_report_month(payload.target_month)
         boss_answers = payload.boss_answers.strip() or "No additional context provided."
 
         supabase = get_supabase_client()
         llm_client = get_zhipu_client()
 
-        # 1. Fetch Context (no LLM calls yet)
-        financial_context = _build_financial_context_payload(supabase, merchant_id, target_month)
+        # 👈 THE FIX: Resolve the ID!
+        actual_shop_id = _resolve_merchant_id(supabase, frontend_id)
+
+        # 1. Fetch Context using the REAL actual_shop_id
+        financial_context = _build_financial_context_payload(supabase, actual_shop_id, target_month)
         financial_trend = financial_context.get("financial_trend", {})
         diagnostic_json = financial_context.get("diagnostic_patterns", {})
-        merchant_profile = _fetch_merchant_profile(supabase, merchant_id)
-        external_signals = _fetch_external_signals(supabase, merchant_id, merchant_profile, target_month)
+        
+        merchant_profile = _fetch_merchant_profile(supabase, actual_shop_id)
+        external_signals = _fetch_external_signals(supabase, actual_shop_id, merchant_profile, target_month)
 
         # ── LLM CALL #1: Generate 3 Strategies AND debate them in one shot ──
         strategy_sys = (
@@ -3112,11 +3140,11 @@ def run_swarm_simulation(payload: SwarmSimulationRequest):
         user_prompt = (
             f"Scenario: \"{payload.scenario_prompt}\"\n"
             f"Shop: {merchant_data.get('type')} | Hours: {merchant_data.get('operating_hours')}\n"
-            f"Financials: {json.dumps(slim_fin)}\n"
-            f"Signals: {json.dumps(sigs)}\n\n"
+            f"Financials: {json.dumps(slim_fin, separators=(',', ':'))}\n" # 👈 Add separators
+            f"Signals: {json.dumps(sigs, separators=(',', ':'))}\n\n" # 👈 Add separators
             f"You will receive a list of micro-cohorts representing groups of people.\n"
             f"Each cohort includes: cohort name, headcount, and behavioral trait.\n"
-            f"Micro-Cohorts to Evaluate:\n{json.dumps(micro_cohorts)}\n\n"
+            f"Micro-Cohorts to Evaluate:\n{json.dumps(micro_cohorts, separators=(',', ':'))}\n\n" # 👈 Add separators
             f"JSON only."
         )
 
@@ -3222,6 +3250,33 @@ def run_swarm_simulation(payload: SwarmSimulationRequest):
         raise
     except Exception as e:
         print(f"Swarm Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+class BossContextRequest(BaseModel):
+    merchant_id: str
+    target_month: str
+    boss_context: str  # This will be a string combining all the Boss's answers
+
+@app.post("/boardroom/save-context")
+def save_boss_context(payload: BossContextRequest):
+    try:
+        supabase = get_supabase_client()
+        # 1. Get the real shop ID
+        actual_merchant_id = _resolve_merchant_id(supabase, payload.merchant_id)
+
+        # 2. Update the boss_context column in your exact table
+        res = supabase.table("monthly_summaries") \
+            .update({"boss_context": payload.boss_context}) \
+            .eq("merchant_id", actual_merchant_id) \
+            .eq("report_month", payload.target_month) \
+            .execute()
+
+        return {
+            "status": "success", 
+            "message": "Boss context saved successfully."
+        }
+    except Exception as e:
+        print(f"Save Context Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
