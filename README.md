@@ -1,17 +1,5 @@
-## Documentation Links
-
-SYSTEM ANALYSIS
-
-https://docs.google.com/document/d/1FfvnXahtFoN30gdM-X2rBpJsC6fhKJdiCv9yF5-KdqA/edit?usp=sharing
-
-Project Requirement Documentation(PRD)
-
-https://docs.google.com/document/d/12vXjSC-Bwpk2ehmE6o5UVHbLSxej_v228uBqamS9nXQ/edit?tab=t.0#heading=h.jhm8xwvnibu
-
-Sample Testing Analysis
-
-https://docs.google.com/document/d/1e7lKW19_NbXfJTjv-YRJSL82HZ9RWXGY/edit?pli=1
-
+For the PRD, SAD, TAD, please refer PDF document folder
+For pitch deck, please refer pitch_deck.hml
 
 
 # 🚀 Tauke.AI

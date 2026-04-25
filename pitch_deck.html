@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tauke.ai | The Sovereign Intelligence for F&B</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Syncopate:wght@400;700&family=Plus+Jakarta+Sans:wght@300;400;600;800&display=swap');
+
+        :root {
+            --gold: #FFD700;
+            --deep-gold: #B8860B;
+            --obsidian: #0A0A0B;
+            --glass: rgba(255, 255, 255, 0.03);
+            --border: rgba(255, 215, 0, 0.15);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            background-color: var(--obsidian);
+            color: #fff;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        /* --- CREATIVE ANIMATED BACKGROUND --- */
+        .bg-wrapper {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -1;
+            background: radial-gradient(circle at 50% 50%, #1a1a1c 0%, #0a0a0b 100%);
+            overflow: hidden;
+        }
+
+        .blob {
+            position: absolute;
+            width: 600px;
+            height: 600px;
+            background: linear-gradient(135deg, rgba(184, 134, 11, 0.15) 0%, rgba(0, 0, 0, 0) 50%);
+            filter: blur(80px);
+            border-radius: 50%;
+            animation: move 25s infinite alternate;
+        }
+
+        @keyframes move {
+            from {
+                transform: translate(-10%, -10%) rotate(0deg);
+            }
+
+            to {
+                transform: translate(20%, 20%) rotate(360deg);
+            }
+        }
+
+        /* --- SLIDE ARCHITECTURE --- */
+        #deck {
+            height: 100vh;
+            width: 100vw;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .slide {
+            position: absolute;
+            width: 80vw;
+            max-width: 1200px;
+            opacity: 0;
+            transform: scale(0.9) translateY(30px);
+            transition: all 0.8s cubic-bezier(0.23, 1, 0.32, 1);
+            visibility: hidden;
+        }
+
+        .slide.active {
+            opacity: 1;
+            transform: scale(1) translateY(0);
+            visibility: visible;
+        }
+
+        /* --- TYPOGRAPHY --- */
+        .logo-mark {
+            position: fixed;
+            top: 40px;
+            left: 40px;
+            font-family: 'Syncopate', sans-serif;
+            font-weight: 700;
+            letter-spacing: 5px;
+            color: var(--gold);
+            font-size: 1.2rem;
+            z-index: 100;
+        }
+
+        h1 {
+            font-family: 'Syncopate', sans-serif;
+            font-size: 5rem;
+            line-height: 0.9;
+            margin-bottom: 20px;
+            text-transform: uppercase;
+        }
+
+        .gradient-text {
+            background: linear-gradient(to bottom, #fff 30%, var(--gold) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        h2 {
+            font-size: 3rem;
+            margin-bottom: 20px;
+            font-weight: 800;
+            letter-spacing: -1px;
+        }
+
+        p {
+            font-size: 1.4rem;
+            color: #a0a0a0;
+            font-weight: 300;
+            max-width: 700px;
+        }
+
+        /* --- CONTENT BLOCKS --- */
+        .feature-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 20px;
+            margin-top: 50px;
+        }
+
+        .glass-card {
+            background: var(--glass);
+            border: 1px solid var(--border);
+            padding: 40px;
+            backdrop-filter: blur(10px);
+            border-radius: 2px;
+            position: relative;
+            transition: 0.3s;
+        }
+
+        .glass-card:hover {
+            background: rgba(255, 215, 0, 0.05);
+            transform: translateY(-10px);
+        }
+
+        .glass-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 40px;
+            height: 2px;
+            background: var(--gold);
+        }
+
+        .tag {
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 3px;
+            color: var(--gold);
+            margin-bottom: 10px;
+            display: block;
+        }
+
+        /* --- CIRCULAR PROGRESS CHARTS --- */
+        .circle-chart {
+            position: relative;
+            width: 140px;
+            height: 140px;
+            border-radius: 50%;
+            background: conic-gradient(var(--gold) calc(var(--p) * 1%), rgba(255, 255, 255, 0.05) 0);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 20px auto;
+        }
+
+        .circle-chart::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            border-radius: 50%;
+            background: repeating-conic-gradient(transparent 0deg 12deg, #161618 12deg 15deg);
+        }
+
+        .circle-chart::before {
+            content: '';
+            position: absolute;
+            inset: 15px;
+            background: #161618;
+            border-radius: 50%;
+            z-index: 1;
+        }
+
+        .circle-value {
+            position: relative;
+            z-index: 2;
+            font-family: 'Syncopate', sans-serif;
+            font-size: 2rem;
+            font-weight: 700;
+            color: #fff;
+        }
+
+        /* --- NAV --- */
+        .controls {
+            position: fixed;
+            bottom: 50px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 30px;
+            z-index: 100;
+        }
+
+        .btn {
+            background: none;
+            border: none;
+            color: #555;
+            font-family: 'Syncopate';
+            cursor: pointer;
+            font-size: 0.7rem;
+            letter-spacing: 2px;
+            transition: 0.3s;
+        }
+
+        .btn:hover {
+            color: var(--gold);
+        }
+
+        .progress-dots {
+            position: fixed;
+            right: 40px;
+            top: 50%;
+            transform: translateY(-50%);
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .dot {
+            width: 6px;
+            height: 6px;
+            border: 1px solid var(--gold);
+            border-radius: 50%;
+            transition: 0.3s;
+        }
+
+        .dot.active {
+            background: var(--gold);
+            height: 30px;
+            border-radius: 10px;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="bg-wrapper">
+        <div class="blob" style="top: -10%; left: -10%;"></div>
+        <div class="blob" style="bottom: -10%; right: -10%; animation-delay: -5s;"></div>
+    </div>
+
+    <div class="logo-mark">TAUKE.AI</div>
+
+    <div id="deck">
+
+        <div class="slide active">
+            <span class="tag">AI-Assisted Decision Support</span>
+            <h1>Proactive <br><span class="gradient-text">Strategist.</span></h1>
+            <p>Tauke.AI transforms F&B SMEs from reactive bookkeepers into proactive planners. Test the ROI of your
+                decisions in a risk-free Sandbox before taking action.</p>
+        </div>
+
+        <div class="slide">
+            <span class="tag">Global Studies</span>
+            <h2>The Danger of <br><span class="gradient-text">Intuition.</span></h2>
+            <p style="font-size: 1.1rem; margin-bottom: 20px;">Studies from top universities cite management, human
+                resources, and resistance to new trends as the leading causes of independent restaurant failure.</p>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 30px; margin-top: 40px;">
+                <div class="glass-card"
+                    style="text-align: center; display: flex; flex-direction: column; justify-content: flex-start;">
+                    <div class="circle-chart" style="--p: 60;">
+                        <div class="circle-value">60%</div>
+                    </div>
+                    <h3 style="font-size: 1.2rem; margin-top: 5px;">1st Year</h3>
+                    <p style="font-size: 0.9rem; margin-top: 10px; text-align: left;">Famously cited restaurant failure
+                        rate, 60% of restaurants do not make it past their first year.</p>
+                </div>
+
+                <div class="glass-card"
+                    style="text-align: center; display: flex; flex-direction: column; justify-content: flex-start; border-color: var(--gold);">
+                    <div class="circle-chart" style="--p: 80;">
+                        <div class="circle-value">80%</div>
+                    </div>
+                    <h3 style="font-size: 1.2rem; margin-top: 5px;">5th Year</h3>
+                    <p style="font-size: 0.9rem; margin-top: 10px; text-align: left;">Up to 80% close up within five
+                        years of operation.</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="slide">
+            <span class="tag">Failure Analysis</span>
+            <h2>The Anatomy of <br><span class="gradient-text">Failure.</span></h2>
+            <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; margin-top: 30px;">
+                <div class="glass-card">
+                    <h3>Mismatch in Value</h3>
+                    <p style="font-size: 0.95rem; line-height: 1.5; margin-top: 10px;">Business failure stems from a
+                        disconnect where the price exceeds the customer's perceived value or the store's ambiance fails
+                        to meet expectations.</p>
+                </div>
+                <div class="glass-card" style="border-color: rgba(255, 77, 77, 0.4);">
+                    <h3 style="color: #ff4d4d;">Operational Inefficiencies</h3>
+                    <p style="font-size: 0.95rem; line-height: 1.5; margin-top: 10px;">Inadequate financial planning,
+                        poor cash flow management, and excessive inventory waste lead to rapid capital depletion.</p>
+                </div>
+                <div class="glass-card">
+                    <h3>Blind Imitation</h3>
+                    <p style="font-size: 0.95rem; line-height: 1.5; margin-top: 10px;">Relying on guesswork or mimicking
+                        competitors without understanding local market gaps results in a generic offering.</p>
+                </div>
+                <div class="glass-card" style="border-color: var(--gold);">
+                    <h3 style="color: var(--gold);">Macro-Environmental Threats</h3>
+                    <p style="font-size: 0.95rem; line-height: 1.5; margin-top: 10px;">Currency fluctuations,
+                        geopolitical supply chain disruptions, and rapid food inflation are driving up essential raw
+                        material costs.</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="slide">
+            <span class="tag">The Root Cause</span>
+            <h2 style="font-size: 3.5rem; margin-bottom: 30px;">Problem <br><span
+                    class="gradient-text">Statement.</span></h2>
+            <div class="glass-card" style="border-left: 10px solid var(--gold); padding: 50px;">
+                <p style="font-size: 1.6rem; line-height: 1.6; color: #fff; max-width: 900px; font-weight: 400;">
+                    "Disconnected business data creates a massive operational blindspot for F&B owners, leaving them
+                    constantly one step behind shrinking profit margins. Without clear financial visibility, they are
+                    paralyzed by the risk of making changes, causing their business growth to stagnate."
+                </p>
+            </div>
+        </div>
+
+        <div class="slide">
+            <span class="tag">The Core Problem</span>
+            <h2>Business Owners are <br>Data Rich, <span class="gradient-text">Insight Poor.</span></h2>
+            <div class="feature-grid">
+                <div class="glass-card">
+                    <h3>Fragmented Data</h3>
+                    <p style="font-size: 1rem; margin-top: 10px;">Systems simply don't talk to each other.</p>
+                </div>
+                <div class="glass-card">
+                    <h3>Reactive Decisions</h3>
+                    <p style="font-size: 1rem; margin-top: 10px;">Owners are always one step behind hidden cost
+                        increases.</p>
+                </div>
+                <div class="glass-card">
+                    <h3>High-Risk Experimentation</h3>
+                    <p style="font-size: 1rem; margin-top: 10px;">Fear that trying a new strategy might sink the
+                        business.</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="slide" style="text-align: center;">
+            <span class="tag">The Mission</span>
+            <h1 style="font-size: 6rem; line-height: 1.1; margin: 30px 0;">
+                <span class="gradient-text">TAUKE AI</span>
+            </h1>
+            <p
+                style="margin: 0 auto; font-size: 1.8rem; line-height: 1.4; color: #fff; font-weight: 400; max-width: 800px;">
+                Stop the guessing, end the fear;<br>make the path to profit clear.
+            </p>
+        </div>
+
+        <div class="slide">
+            <span class="tag">The Sandbox Environment</span>
+            <h2>MiroFish Swarm <br><span class="gradient-text">Simulation.</span></h2>
+            <div
+                style="display: grid; grid-template-columns: 1.2fr 0.8fr; gap: 40px; margin-top: 30px; align-items: start;">
+
+                <div>
+                    <p style="font-size: 1.2rem; line-height: 1.6; color: #fff; margin-bottom: 25px;">
+                        Test business ideas safely before committing real budget. Our engine builds a hyper-realistic
+                        <strong>'digital twin'</strong> of your market.
+                    </p>
+
+                    <div class="glass-card" style="border-left: 4px solid var(--gold); padding: 20px 30px;">
+                        <h4 style="color: var(--gold); margin-bottom: 10px; font-size: 1rem; letter-spacing: 1px;">THE
+                            SWARM LOGIC</h4>
+                        <p style="font-size: 0.95rem; color: #ccc;">
+                            The system dynamically generates hundreds of unique AI agents mapped to your actual customer
+                            base. By injecting randomized personalities and budgets, we create a living, unpredictable
+                            market.
+                        </p>
+                    </div>
+                </div>
+
+                <div class="glass-card"
+                    style="text-align: center; background: radial-gradient(circle at center, rgba(255, 215, 0, 0.1) 0%, transparent 70%);">
+                    <div style="margin-bottom: 20px;">
+                        <span class="tag" style="font-size: 0.6rem;">Real-Time Sandbox</span>
+                        <h3 style="font-size: 1.5rem; color: var(--gold);">1,000+</h3>
+                        <p style="font-size: 0.8rem; text-transform: uppercase; letter-spacing: 1px;">Active Agents</p>
+                    </div>
+                    <p style="font-size: 0.85rem; line-height: 1.4; color: #aaa;">
+                        Watch your market react to promotions or price changes in real-time, driven by internal data and
+                        external signals.
+                    </p>
+                </div>
+
+            </div>
+        </div>
+
+        <div class="slide" style="text-align: center;">
+            <span class="tag">Intelligent Guidance</span>
+            <h2>What if you don't <br>have <span class="gradient-text">any ideas?</span></h2>
+            <div class="glass-card"
+                style="margin-top: 40px; border-left: none; border-top: 4px solid var(--gold); padding: 60px;">
+                <p style="font-size: 1.8rem; color: #fff; margin: 0 auto; max-width: 900px; line-height: 1.4;">
+                    Don’t worry. We automatically <strong style="color: var(--gold);">analyze your performance</strong>
+                    and feed you data-driven suggestions to spark your next big move.
+                </p>
+                <div style="margin-top: 40px; display: flex; justify-content: center; gap: 20px;">
+                    <span class="tag"
+                        style="border: 1px solid var(--gold); padding: 5px 15px; border-radius: 20px;">Performance
+                        Audit</span>
+                    <span class="tag"
+                        style="border: 1px solid var(--gold); padding: 5px 15px; border-radius: 20px;">Trend
+                        Discovery</span>
+                    <span class="tag"
+                        style="border: 1px solid var(--gold); padding: 5px 15px; border-radius: 20px;">Auto-Suggestions</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="slide">
+            <span class="tag">Step 1 & 2: Ingestion</span>
+            <h2>The Data <span class="gradient-text">Engines.</span></h2>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 30px; margin-top: 40px;">
+                <div class="glass-card">
+                    <span class="tag" style="margin-bottom: 5px; color: #fff;">"The Eyes and Ears"</span>
+                    <h3>1. The Web Scraper</h3>
+                    <p style="font-size: 1.1rem; margin-top: 15px; line-height: 1.6;">Constantly scanning local market
+                        trends, news, and location-based data so the system always understands the real-world
+                        environment.</p>
+                </div>
+                <div class="glass-card" style="border-left: 4px solid var(--gold);">
+                    <span class="tag" style="margin-bottom: 5px; color: #fff;">"The Internal Auditor"</span>
+                    <h3 style="color: var(--gold);">2. The Detective Analyst</h3>
+                    <p style="font-size: 1.1rem; margin-top: 15px; line-height: 1.6;">Inwardly auditing uploaded sales
+                        and invoices to uncover hidden cost leaks and provide financial health insights.</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="slide">
+            <span class="tag">Step 3 & 4: Verification & Strategy</span>
+            <h2>Control & <span class="gradient-text">Consensus.</span></h2>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 30px; margin-top: 40px;">
+                <div class="glass-card" style="border-color: rgba(255, 77, 77, 0.4); border-left: 4px solid #ff4d4d;">
+                    <span class="tag" style="margin-bottom: 5px; color: #fff;">"Accurate Verification"</span>
+                    <h3 style="color: #ff4d4d;">3. The Supervisor</h3>
+                    <p style="font-size: 1.05rem; margin-top: 15px; line-height: 1.6;">Eliminating AI hallucination by
+                        directly asking the user for confirmation. This human-in-the-loop validation ensures all
+                        generated results are 100% accurate.</p>
+                </div>
+                <div class="glass-card" style="border-color: var(--gold); border-left: 4px solid var(--gold);">
+                    <span class="tag" style="margin-bottom: 5px; color: #fff;">"The Boardroom"</span>
+                    <h3 style="color: var(--gold);">4. Multi-Agent Debating</h3>
+                    <p style="font-size: 1.05rem; margin-top: 15px; line-height: 1.6;">Specialized agents acting as CFO,
+                        CMO, and COO debate strategies. The final CEO agent evaluates these opinions to recommend the
+                        safest, most profitable direction.</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="slide">
+            <span class="tag">Step 5: Forecasting</span>
+            <h2>Execution <span class="gradient-text">Roadmap.</span></h2>
+            <div class="glass-card" style="margin-top: 30px; border-left: 10px solid var(--gold); padding: 50px;">
+                <span class="tag" style="font-size: 0.9rem; margin-bottom: 10px; color: #fff;">"The Strategic
+                    Blueprint"</span>
+                <h3 style="font-size: 2.5rem; margin: 10px 0; color: var(--gold);">5. The Roadmap</h3>
+                <p style="font-size: 1.2rem; margin-top: 20px; max-width: 900px; line-height: 1.6;">
+                    Finally, once a strategy is chosen, the system delivers one final recommended direction together
+                    with a step-by-step execution roadmap. This roadmap provides actionable blueprints for
+                    implementation, ensuring the owner can move from insight to real-world impact with absolute clarity.
+                </p>
+            </div>
+        </div>
+
+        <div class="slide">
+            <span class="tag">Competitive Advantage</span>
+            <h2>Why Not Just Use <br><span class="gradient-text">ChatGPT?</span></h2>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 30px; margin-top: 20px;">
+                <div class="glass-card"
+                    style="border-color: rgba(255, 77, 77, 0.4); border-left: 2px solid #ff4d4d; padding: 25px 35px;">
+                    <h3
+                        style="color: #ff4d4d; border-bottom: 1px solid rgba(255,77,77,0.2); padding-bottom: 10px; margin-bottom: 15px; font-size: 1.1rem;">
+                        ❌ The Old Way (Competitors)</h3>
+                    <div style="margin-bottom: 15px;">
+                        <strong
+                            style="color: #fff; font-size: 0.85rem; display: block; margin-bottom: 3px; letter-spacing: 1px;">COSTLY
+                            TRIAL-AND-ERROR</strong>
+                        <p style="font-size: 0.85rem; color: #aaa; margin: 0; line-height: 1.4;"><strong
+                                style="color: #fff;">Too risky:</strong> Testing new business strategies with real
+                            revenue.</p>
+                    </div>
+                    <div style="margin-bottom: 15px;">
+                        <strong
+                            style="color: #fff; font-size: 0.85rem; display: block; margin-bottom: 3px; letter-spacing: 1px;">TEXTBOOK
+                            ADVICE</strong>
+                        <p style="font-size: 0.85rem; color: #aaa; margin: 0; line-height: 1.4;"><strong
+                                style="color: #fff;">Too General:</strong> Doesn't give specific executable instruction.
+                        </p>
+                    </div>
+                    <div style="margin-bottom: 15px;">
+                        <strong
+                            style="color: #fff; font-size: 0.85rem; display: block; margin-bottom: 3px; letter-spacing: 1px;">MONOTONOUS
+                            STRATEGIES</strong>
+                        <p style="font-size: 0.85rem; color: #aaa; margin: 0; line-height: 1.4;"><strong
+                                style="color: #fff;">One-Sided AI:</strong> Doesn't think from multiple perspectives.
+                        </p>
+                    </div>
+                    <div>
+                        <strong
+                            style="color: #fff; font-size: 0.85rem; display: block; margin-bottom: 3px; letter-spacing: 1px;">INTUITION
+                            FORESIGHT</strong>
+                        <p style="font-size: 0.85rem; color: #aaa; margin: 0; line-height: 1.4;"><strong
+                                style="color: #fff;">Flat Predictions:</strong> Doesn't make customized prediction based
+                            on internal data pattern.</p>
+                    </div>
+                </div>
+
+                <div class="glass-card"
+                    style="border-color: var(--gold); border-left: 2px solid var(--gold); background: rgba(255, 215, 0, 0.05); padding: 25px 35px;">
+                    <h3
+                        style="color: var(--gold); border-bottom: 1px solid rgba(255,215,0,0.2); padding-bottom: 10px; margin-bottom: 15px; font-size: 1.1rem;">
+                        ✅ The Tauke.AI Way</h3>
+                    <div style="margin-bottom: 15px;">
+                        <strong
+                            style="color: var(--gold); font-size: 0.85rem; display: block; margin-bottom: 3px; letter-spacing: 1px;">COST-FREE
+                            SIMULATION</strong>
+                        <p style="font-size: 0.85rem; color: #ddd; margin: 0; line-height: 1.4;"><strong
+                                style="color: var(--gold);">Real-World Simulation:</strong> Safe strategy testing.</p>
+                    </div>
+                    <div style="margin-bottom: 15px;">
+                        <strong
+                            style="color: var(--gold); font-size: 0.85rem; display: block; margin-bottom: 3px; letter-spacing: 1px;">DETAILED
+                            GUIDANCE</strong>
+                        <p style="font-size: 0.85rem; color: #ddd; margin: 0; line-height: 1.4;"><strong
+                                style="color: var(--gold);">Phased Execution Roadmaps:</strong> Step-by-step actionable
+                            blueprints.</p>
+                    </div>
+                    <div style="margin-bottom: 15px;">
+                        <strong
+                            style="color: var(--gold); font-size: 0.85rem; display: block; margin-bottom: 3px; letter-spacing: 1px;">HOLISTIC
+                            STRATEGIES</strong>
+                        <p style="font-size: 0.85rem; color: #ddd; margin: 0; line-height: 1.4;"><strong
+                                style="color: var(--gold);">Multi-Agent Debate:</strong> Find the smartest strategy.</p>
+                    </div>
+                    <div>
+                        <strong
+                            style="color: var(--gold); font-size: 0.85rem; display: block; margin-bottom: 3px; letter-spacing: 1px;">DATA-DRIVEN
+                            FORESIGHT</strong>
+                        <p style="font-size: 0.85rem; color: #ddd; margin: 0; line-height: 1.4;"><strong
+                                style="color: var(--gold);">Customized Prediction:</strong> Internal data meets external
+                            signals on making prediction.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="slide" style="text-align: center;">
+            <span class="tag">What’s Next</span>
+            <h2 style="margin-bottom: 10px;">Beyond the <span class="gradient-text">Sandbox</span></h2>
+
+            <div
+                style="display: grid; grid-template-columns: 1fr 1fr; gap: 40px; max-width: 900px; margin: 40px auto 0; text-align: left;">
+
+                <div class="glass-card" style="border-color: var(--gold); padding: 40px;">
+                    <h3 style="color: var(--gold); font-size: 1.4rem; margin-bottom: 15px;">Automatic Business Execution
+                    </h3>
+                    <p style="font-size: 1.05rem; line-height: 1.6; color: #ccc;">Enables the AI to autonomously adjust
+                        pricing and launch campaigns in real-time to maximize profits without user intervention.</p>
+                </div>
+
+                <div class="glass-card" style="border-color: var(--gold); padding: 40px;">
+                    <h3 style="color: var(--gold); font-size: 1.4rem; margin-bottom: 15px;">Handwritten Data Ingestion
+                    </h3>
+                    <p style="font-size: 1.05rem; line-height: 1.6; color: #ccc;">Expanding access to traditional street
+                        hawkers by using vision AI to process photos of handwritten sales and inventory books,
+                        completely eliminating the need for CSVs.</p>
+                </div>
+
+            </div>
+        </div>
+
+    </div>
+
+    <div class="progress-dots" id="dots"></div>
+
+    <div class="controls">
+        <button class="btn" onclick="prevSlide()">[ PREVIOUS ]</button>
+        <button class="btn" onclick="nextSlide()">[ NEXT ]</button>
+    </div>
+
+    <script>
+        let current = 0;
+        const slides = document.querySelectorAll('.slide');
+        const dotsContainer = document.getElementById('dots');
+
+        slides.forEach((_, i) => {
+            const dot = document.createElement('div');
+            dot.className = `dot ${i === 0 ? 'active' : ''}`;
+            dotsContainer.appendChild(dot);
+        });
+
+        function update() {
+            slides.forEach((s, i) => s.classList.toggle('active', i === current));
+            document.querySelectorAll('.dot').forEach((d, i) => d.classList.toggle('active', i === current));
+        }
+
+        function nextSlide() {
+            if (current < slides.length - 1) {
+                current++;
+                update();
+            }
+        }
+
+        function prevSlide() {
+            if (current > 0) {
+                current--;
+                update();
+            }
+        }
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowRight' || e.key === ' ') nextSlide();
+            if (e.key === 'ArrowLeft') prevSlide();
+        });
+    </script>
+</body>
+
+</html>
