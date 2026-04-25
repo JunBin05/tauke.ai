@@ -23,6 +23,11 @@ Tauke.AI is an end-to-end intelligence platform designed to help Malaysian Food 
 
 ---
 
+## 🌐 Website URL
+https://tauke-ai.vercel.app/ 
+
+---
+
 ## ⚠️ Important Note: Waking Up the Server
 
 Since our backend API is hosted on Render, the server may automatically go to sleep after a period of inactivity.
