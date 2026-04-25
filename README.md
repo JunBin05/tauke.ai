@@ -2,6 +2,12 @@
 
 **For pitch deck, please refer `pitch_deck.html`**
 
+## Pitching video (Youtube)
+https://youtu.be/YudMsOuuv58
+
+## Pitching video (Google drive)
+https://drive.google.com/file/d/1SoTYX_JMC1RFCHZqdBRLzKcYgy3gKvVY/view?usp=sharing
+
 
 # 🚀 Tauke.AI
 
@@ -14,6 +20,8 @@ Tauke.AI is an end-to-end intelligence platform designed to help Malaysian Food 
 
 ## 🌐 Website URL
 https://tauke-ai.vercel.app/ 
+
+
 
 ---
 
