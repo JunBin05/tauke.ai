@@ -1,5 +1,6 @@
-For the PRD, SAD, TAD, please refer PDF document folder
-For pitch deck, please refer pitch_deck.hml
+**For the PRD, SAD, TAD, please refer `PDF document` folder**
+
+**For pitch deck, please refer `pitch_deck.html`**
 
 
 # 🚀 Tauke.AI
