@@ -57,15 +57,43 @@ export default function CampaignRoadmap() {
   const handleDownloadPDF = async () => {
     const element = pdfExportRef.current;
     if (!element) return;
+    
     try {
-      const canvas = await html2canvas(element, { scale: 2, useCORS: true, backgroundColor: '#f8fafc' });
+      // 1. Force the scroll to the top momentarily so html2canvas doesn't glitch the coordinate mapping
+      const originalScroll = window.scrollY;
+      window.scrollTo(0, 0);
+
+      // 2. Take the screenshot, forcing it to capture the full scroll height
+      const canvas = await html2canvas(element, { 
+        scale: 2, 
+        useCORS: true, 
+        backgroundColor: '#f8fafc',
+        scrollY: 0,
+        windowHeight: element.scrollHeight // Ensures it captures the bottom!
+      });
+      
+      // Restore the user's scroll position
+      window.scrollTo(0, originalScroll);
+
       const imgData = canvas.toDataURL('image/png');
-      const pdf = new jsPDF('p', 'mm', 'a4');
-      const pdfWidth = pdf.internal.pageSize.getWidth();
+      
+      // 3. Calculate the exact height needed based on a standard 210mm width
+      const pdfWidth = 210; 
       const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+
+      // 4. FIX: Create a PDF with a CUSTOM dynamic height instead of 'a4'
+      const pdf = new jsPDF({
+        orientation: 'portrait',
+        unit: 'mm',
+        format: [pdfWidth, pdfHeight + 20] // Adds 20mm of padding at the bottom
+      });
+
+      // 5. Paste the image and save
       pdf.addImage(imgData, 'PNG', 0, 10, pdfWidth, pdfHeight);
+      
       const targetMonth = localStorage.getItem("target_month") || "Plan";
       pdf.save(`Tauke_Roadmap_${targetMonth}.pdf`);
+      
     } catch (error) {
       console.error("Failed to generate PDF:", error);
       alert("Error generating PDF.");
@@ -135,7 +163,7 @@ export default function CampaignRoadmap() {
               </div>
             </div>
             <div className="summary-footer">
-              <div className="team-avatars">
+              <div className="team-avatars" data-html2canvas-ignore="true">
                 <img src="https://i.pravatar.cc/100?img=1" alt="Team 1" />
                 <img src="https://i.pravatar.cc/100?img=2" alt="Team 2" />
                 <div className="team-more">+</div>
