@@ -1,5 +1,8 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
+import { motion, useScroll, useSpring } from "framer-motion";
+import html2canvas from 'html2canvas'; 
+import { jsPDF } from 'jspdf';
 import "./CampaignRoadmap.css";
 
 // Icon map for timeline phases
@@ -46,6 +49,41 @@ export default function CampaignRoadmap() {
   const navigate = useNavigate();
   const [roadmap, setRoadmap] = useState(null);
   const [scenario, setScenario] = useState("");
+  
+  // Create a ref for the timeline container to track scrolling
+  const timelineRef = useRef(null);
+  const pdfExportRef = useRef(null);
+  
+  const handleDownloadPDF = async () => {
+    const element = pdfExportRef.current;
+    if (!element) return;
+    try {
+      const canvas = await html2canvas(element, { scale: 2, useCORS: true, backgroundColor: '#f8fafc' });
+      const imgData = canvas.toDataURL('image/png');
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+      pdf.addImage(imgData, 'PNG', 0, 10, pdfWidth, pdfHeight);
+      const targetMonth = localStorage.getItem("target_month") || "Plan";
+      pdf.save(`Tauke_Roadmap_${targetMonth}.pdf`);
+    } catch (error) {
+      console.error("Failed to generate PDF:", error);
+      alert("Error generating PDF.");
+    }
+  };
+  
+  // Track vertical scroll progress inside the timeline section
+  const { scrollYProgress } = useScroll({
+    target: timelineRef,
+    offset: ["start 80%", "end 60%"] // Starts animating when top hits 80% of screen, finishes near middle
+  });
+  
+  // Add a spring physics effect so the line flows smoothly
+  const scaleY = useSpring(scrollYProgress, {
+    stiffness: 100,
+    damping: 30,
+    restDelta: 0.001
+  });
 
   useEffect(() => {
     const stored = localStorage.getItem("swarm_roadmap");
@@ -65,7 +103,7 @@ export default function CampaignRoadmap() {
 
   return (
     <div className="roadmap-page">
-      <div className="roadmap-content">
+      <div className="roadmap-content" ref={pdfExportRef}>
         <header className="page-header">
           <p className="kicker">STRATEGIC BLUEPRINT</p>
           <h2 className="page-title">Campaign Roadmap</h2>
@@ -76,7 +114,7 @@ export default function CampaignRoadmap() {
           </p>
         </header>
 
-        {/* Execution Summary */}
+        {/* Execution Summary (Unchanged) */}
         <section className="execution-summary-section">
           <div className="summary-card">
             <h3>Execution Summary</h3>
@@ -123,32 +161,67 @@ export default function CampaignRoadmap() {
           </div>
         </section>
 
-        {/* Central Alternating Timeline */}
+        {/* Dynamic Alternating Timeline */}
         {phases.length > 0 ? (
-          <section className="central-timeline">
+          <section className="central-timeline" ref={timelineRef}>
+            
+            {/* The static gray background line */}
+            <div className="timeline-base-line" />
+            
+            {/* The animated flowing blue line */}
+            <motion.div 
+              className="timeline-progress-line" 
+              style={{ scaleY }} 
+            />
+
             {phases.map((phase, index) => {
               const isLeft = index % 2 === 0;
               const icon = PHASE_ICONS[index % PHASE_ICONS.length];
               const state = STATE_MAP[Math.min(index, STATE_MAP.length - 1)];
+              
               return (
                 <div className={`timeline-row ${state}`} key={index}>
-                  <div className="timeline-col-left">
+                  
+                  {/* Left Column (Slides in from the left) */}
+                  <motion.div 
+                    className="timeline-col-left"
+                    initial={{ opacity: 0, x: -40 }}
+                    whileInView={{ opacity: 1, x: 0 }}
+                    viewport={{ once: true, margin: "-100px" }}
+                    transition={{ duration: 0.5, ease: "easeOut" }}
+                  >
                     {isLeft ? (
                       <MainBlock phase={phase} index={index} />
                     ) : (
                       <DateBlock phase={phase} index={index} totalDays={totalDays} />
                     )}
-                  </div>
-                  <div className="timeline-center-icon">
+                  </motion.div>
+
+                  {/* Center Icon (Pops in) */}
+                  <motion.div 
+                    className="timeline-center-icon"
+                    initial={{ opacity: 0, scale: 0 }}
+                    whileInView={{ opacity: 1, scale: 1 }}
+                    viewport={{ once: true, margin: "-100px" }}
+                    transition={{ duration: 0.4, delay: 0.1, type: "spring", stiffness: 200 }}
+                  >
                     <span className="material-symbols-outlined">{icon}</span>
-                  </div>
-                  <div className="timeline-col-right">
+                  </motion.div>
+
+                  {/* Right Column (Slides in from the right) */}
+                  <motion.div 
+                    className="timeline-col-right"
+                    initial={{ opacity: 0, x: 40 }}
+                    whileInView={{ opacity: 1, x: 0 }}
+                    viewport={{ once: true, margin: "-100px" }}
+                    transition={{ duration: 0.5, ease: "easeOut" }}
+                  >
                     {isLeft ? (
                       <DateBlock phase={phase} index={index} totalDays={totalDays} />
                     ) : (
                       <MainBlock phase={phase} index={index} />
                     )}
-                  </div>
+                  </motion.div>
                 </div>
               );
             })}
@@ -172,7 +245,7 @@ export default function CampaignRoadmap() {
           </div>
         )}
 
-        {/* Bottom CTA */}
+        {/* Bottom CTA (Unchanged) */}
         {phases.length > 0 && (
           <section className="cta-section">
             <div className="cta-content">
@@ -185,7 +258,7 @@ export default function CampaignRoadmap() {
               <button className="btn-secondary" onClick={() => navigate("/simulation")}>
                 Run Another Simulation
               </button>
-              <button className="btn-primary" onClick={() => window.print()}>
+              <button className="btn-primary" onClick={handleDownloadPDF}>
                 Export Roadmap
               </button>
             </div>

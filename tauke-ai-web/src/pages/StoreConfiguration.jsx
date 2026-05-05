@@ -1,11 +1,12 @@
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { API_BASE_URL } from '../config';
-import { Store, RefreshCw, LayoutDashboard, MessageSquare, Shield, Sparkles, MapPin, Clock, Users, Check, Plus, Trash2, Loader2 } from 'lucide-react';
-import { GoogleMap, useJsApiLoader, Marker } from '@react-google-maps/api';
+import { GoogleMap, useJsApiLoader, Marker, Autocomplete } from '@react-google-maps/api';
 import './StoreConfiguration.css';
+import { Store, RefreshCw, LayoutDashboard, MessageSquare, Shield, Sparkles, MapPin, Clock, Users, Check, Plus, Trash2, Loader2, Search } from 'lucide-react';
 
 const center = { lat: 3.140853, lng: 101.693207 };
+const libraries = ['places'];
 
 export default function StoreConfiguration() {
   const navigate = useNavigate();
@@ -14,6 +15,8 @@ export default function StoreConfiguration() {
   const [isSuccess, setIsSuccess] = useState(false);
   const [isFetching, setIsFetching] = useState(true); // <-- NEW: Loading state for initial fetch
   const [locationName, setLocationName] = useState("Kuala Lumpur City Centre");
+  const [searchQuery, setSearchQuery] = useState("");
+  
 
   // Form State
   const [storeName, setStoreName] = useState('Kopitiam AI Central');
@@ -31,7 +34,26 @@ export default function StoreConfiguration() {
   });
 
   const [markerPosition, setMarkerPosition] = useState(center);
-  const { isLoaded } = useJsApiLoader({ id: 'google-map-script', googleMapsApiKey: import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '' });
+  const { isLoaded } = useJsApiLoader({ id: 'google-map-script', googleMapsApiKey: import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '', libraries: libraries });
+
+  const [autocomplete, setAutocomplete] = useState(null);
+
+  const onLoadAutocomplete = (autoC) => setAutocomplete(autoC);
+
+  const onPlaceChanged = () => {
+    if (autocomplete !== null) {
+      const place = autocomplete.getPlace();
+      if (place.geometry && place.geometry.location) {
+        const newPos = {
+          lat: place.geometry.location.lat(),
+          lng: place.geometry.location.lng()
+        };
+        setMarkerPosition(newPos);
+        setLocationName(place.formatted_address || place.name);
+        setSearchQuery(place.formatted_address || place.name);
+      }
+    }
+  };
 
   // --- NEW: Fetch Existing Profile Data ---
   useEffect(() => {
@@ -52,7 +74,7 @@ export default function StoreConfiguration() {
           if (p.name) setStoreName(p.name);
           if (p.type) setBusinessType(p.type);
           if (p.pricing_tier) setPricingTier(p.pricing_tier);
-          if (p.address) setLocationName(p.address);
+          if (p.address) {setLocationName(p.address);setSearchQuery(p.address);}
           if (p.latitude && p.longitude) setMarkerPosition({ lat: p.latitude, lng: p.longitude });
 
           // Parse JSON target audience back into React state array
@@ -111,20 +133,40 @@ export default function StoreConfiguration() {
   };
 
   const onMarkerDragEnd = useCallback((e) => {
-    if (e.latLng) {
-      const newPos = { lat: e.latLng.lat(), lng: e.latLng.lng() };
-      setMarkerPosition(newPos);
+      if (e.latLng) {
+        const newPos = { lat: e.latLng.lat(), lng: e.latLng.lng() };
+        setMarkerPosition(newPos);
 
-      const geocoder = new window.google.maps.Geocoder();
-      geocoder.geocode({ location: newPos }, (results, status) => {
-        if (status === "OK" && results[0]) {
-          setLocationName(results[0].formatted_address);
-        } else {
-          setLocationName("Unknown Location");
-        }
-      });
-    }
-  }, []);
+        const geocoder = new window.google.maps.Geocoder();
+        geocoder.geocode({ location: newPos }, (results, status) => {
+          if (status === "OK" && results[0]) {
+            setLocationName(results[0].formatted_address);
+            setSearchQuery(results[0].formatted_address); // <-- ADD THIS
+          } else {
+            setLocationName("Unknown Location");
+          }
+        });
+      }
+    }, []);
+    
+    const handleSearchAddress = useCallback(() => {
+    if (!searchQuery.trim() || !window.google) return;
+    
+    const geocoder = new window.google.maps.Geocoder();
+    geocoder.geocode({ address: searchQuery }, (results, status) => {
+      if (status === "OK" && results[0]) {
+        const newPos = { 
+          lat: results[0].geometry.location.lat(), 
+          lng: results[0].geometry.location.lng() 
+        };
+        setMarkerPosition(newPos);
+        setLocationName(results[0].formatted_address);
+        setSearchQuery(results[0].formatted_address); // Auto-formats the text they typed
+      } else {
+        alert("Location not found. Please try a more specific address or city.");
+      }
+    });
+  }, [searchQuery]);
 
   const handleSaveProfile = async () => {
     if (totalAllocation !== 100) return alert("Audience allocation must equal 100%.");
@@ -188,7 +230,7 @@ export default function StoreConfiguration() {
         <header style={{ marginBottom: '48px' }}>
           <span style={{ background: '#6ffb85', color: '#006e28', padding: '4px 12px', borderRadius: '99px', fontSize: '12px', fontWeight: 'bold' }}>ONBOARDING MODULE</span>
           <h2 className="sc-title">Business DNA <br /><span className="sc-gradient-text">Configuration</span></h2>
-          <p style={{ color: '#717786', fontSize: '18px' }}>Establish the core operating parameters for your SME.</p>
+          <p style={{ color: '#717786', fontSize: '18px' }}>Let’s set the ground rules for how our business runs.</p>
         </header>
 
         <div className="sc-grid">
@@ -207,7 +249,7 @@ export default function StoreConfiguration() {
                   </select>
                 </div>
                 <div>
-                  <label className="sc-label">Pricing Tier</label>
+                  <label className="sc-label">rice levels</label>
                   <select className="sc-input" value={pricingTier} onChange={(e) => setPricingTier(e.target.value)}>
                     <option>Budget</option><option>Mid-Market</option><option>Premium</option>
                   </select>
@@ -235,12 +277,35 @@ export default function StoreConfiguration() {
                       onChange={(e) => setAudiences(audiences.map(a => a.id === aud.id ? { ...a, name: e.target.value } : a))}
                       style={{ border: 'none', background: 'transparent', color: '#1a1c1d', padding: 0, width: 'auto' }}
                     />
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                      <span>{aud.value}%</span>
-                      <button className="sc-icon-btn" onClick={() => removeAudience(aud.id)} title={`Remove ${aud.name}`}>
-                        <Trash2 size={16} color="red" />
-                      </button>
-                    </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                        {/* THE NEW TYPEABLE INPUT */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
+                          <input
+                            type="number"
+                            min="0"
+                            max="100"
+                            value={aud.value === 0 ? '' : aud.value} // Allows user to easily delete and retype
+                            onChange={(e) => {
+                              let val = e.target.value;
+                              if (val === '') {
+                                updateAudienceValue(aud.id, 0);
+                                return;
+                              }
+                              val = parseInt(val, 10);
+                              if (val > 100) val = 100; // Prevents typing over 100
+                              if (val < 0) val = 0;     // Prevents typing negative numbers
+                              updateAudienceValue(aud.id, val);
+                            }}
+                            className="sc-audience-number"
+                            placeholder="0"
+                          />
+                          <span style={{ fontSize: '16px' }}>%</span>
+                        </div>
+                        
+                        <button className="sc-icon-btn" onClick={() => removeAudience(aud.id)} title={`Remove ${aud.name}`}>
+                          <Trash2 size={16} color="red" />
+                        </button>
+                      </div>
                   </div>
                   <input type="range" min="0" max="100" value={aud.value} onChange={(e) => updateAudienceValue(aud.id, parseInt(e.target.value))} className="sc-range" />
                 </div>
@@ -252,15 +317,36 @@ export default function StoreConfiguration() {
           <div>
             <div className="sc-card">
               <h3 className="sc-card-title"><MapPin color="#0058bc" /> Location Context</h3>
-
-              {/* 👈 Update this line to show the real address! */}
-              <p style={{ fontSize: '14px', color: '#717786', minHeight: '40px' }}>
-                {locationName === "Kuala Lumpur City Centre" ? "Drag pin to your exact storefront." : locationName}
+              
+              {/* 👇 THE NEW PREMIUM SEARCH BAR 👇 */}
+              {isLoaded && (
+                <div className="sc-location-search-container">
+                  <Autocomplete onLoad={onLoadAutocomplete} onPlaceChanged={onPlaceChanged}>
+                    <div className="sc-search-input-wrapper">
+                      <Search size={18} className="sc-search-icon-left" />
+                      <input 
+                        type="text" 
+                        className="sc-location-input" 
+                        placeholder="Search for your store address..." 
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && handleSearchAddress()}
+                      />
+                      <button className="sc-search-btn-right" onClick={handleSearchAddress}>
+                        Search
+                      </button>
+                    </div>
+                  </Autocomplete>
+                </div>
+              )}
+              
+              <p style={{ fontSize: '12px', color: '#717786', margin: '8px 0 16px 0', lineHeight: 1.4 }}>
+                Select a suggestion, type your address and hit Enter, or drag the pin to fine-tune your exact storefront coordinates.
               </p>
 
               <div className="sc-map-container">
                 {isLoaded ? (
-                  <GoogleMap mapContainerStyle={{ width: '100%', height: '100%' }} center={center} zoom={15} options={{ disableDefaultUI: true }}>
+                  <GoogleMap mapContainerStyle={{ width: '100%', height: '100%' }} center={markerPosition} zoom={15} options={{ disableDefaultUI: true }}>
                     <Marker position={markerPosition} draggable={true} onDragEnd={onMarkerDragEnd} />
                   </GoogleMap>
                 ) : (<div style={{ padding: '20px', textAlign: 'center' }}>Loading Map...</div>)}

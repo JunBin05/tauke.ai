@@ -5,24 +5,31 @@ import json
 import os
 import re
 import random
-import json
+from unittest import result
 import requests
-from datetime import datetime, timedelta, timezone
-from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
-from typing import Any, Dict, List, Optional, Tuple
-
 import fitz
 import pandas as pd
 import zhipuai
 import concurrent.futures
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from typing import Any, Dict, List, Optional, Tuple
+
+# 1. LOAD THE .ENV FILE FIRST!!!
 from dotenv import find_dotenv, load_dotenv
+load_dotenv(find_dotenv(), override=True)
+
+# 2. THEN IMPORT YOUR CUSTOM MODULES
+from llm_router import call_llm
+from sync_router import run_sync_router
+from helpers import get_zhipu_api_key, _extract_model_text, _parse_model_json
+
+# 3. THEN FASTAPI STUFF
 from fastapi import BackgroundTasks, FastAPI, HTTPException, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from supabase import Client, create_client
-
 from collections import defaultdict
-from datetime import datetime
 
 
 load_dotenv(find_dotenv(), override=True)
@@ -142,14 +149,7 @@ app.add_middleware(
 
 
 
-def get_zhipu_api_key() -> str:
-    api_key = os.getenv("ZHIPU_API_KEY") or os.getenv("ZHIPUAI_API_KEY")
-    if not api_key:
-        raise HTTPException(
-            status_code=500,
-            detail="Missing ZHIPU_API_KEY or ZHIPUAI_API_KEY environment variable",
-        )
-    return api_key
+
 
 
 def _get_google_places_api_key() -> Optional[str]:
@@ -186,178 +186,6 @@ def get_supabase_client() -> Client:
         )
 
     return create_client(supabase_url, supabase_key)
-
-
-def _extract_model_text(raw_content: Any) -> str:
-    if raw_content is None:
-        return ""
-
-    if isinstance(raw_content, str):
-        return raw_content.strip()
-
-    if isinstance(raw_content, dict):
-        text_value = raw_content.get("text")
-        if isinstance(text_value, str):
-            return text_value.strip()
-
-        content_value = raw_content.get("content")
-        if content_value is not None:
-            return _extract_model_text(content_value)
-
-        return ""
-
-    if isinstance(raw_content, list):
-        parts: List[str] = []
-        for part in raw_content:
-            extracted = _extract_model_text(part)
-            if extracted:
-                parts.append(extracted)
-        return "\n".join(parts).strip()
-
-    return str(raw_content).strip()
-
-
-def _strip_markdown_fences(text: str) -> str:
-    """Remove any surrounding markdown code fences from an LLM response."""
-    cleaned = text.strip()
-    if cleaned.startswith("```"):
-        first_newline = cleaned.find("\n")
-        cleaned = cleaned[first_newline + 1:] if first_newline != -1 else cleaned[3:]
-        if cleaned.endswith("```"):
-            cleaned = cleaned[:-3]
-        cleaned = cleaned.strip()
-    return cleaned
-
-
-def _extract_json_from_text(raw_text: str, want_array: bool = False) -> str:
-    """Multi-strategy JSON extractor — handles preamble text, markdown fences, truncated fences."""
-    # Strategy 1: plain strip of fences
-    candidate = _strip_markdown_fences(raw_text)
-    try:
-        json.loads(candidate)
-        return candidate
-    except json.JSONDecodeError:
-        pass
-
-    # Strategy 2: find the first { or [ and last } or ]
-    open_char, close_char = ("[", "]") if want_array else ("{", "}")
-    start = raw_text.find(open_char)
-    end = raw_text.rfind(close_char)
-    if start != -1 and end != -1 and end > start:
-        candidate = raw_text[start : end + 1]
-        try:
-            json.loads(candidate)
-            return candidate
-        except json.JSONDecodeError:
-            pass
-
-    # Strategy 3: try the stripped candidate anyway (e.g. trailing garbage after })
-    for open_c, close_c in [("{" , "}"), ("[", "]")]:
-        s = raw_text.find(open_c)
-        e = raw_text.rfind(close_c)
-        if s != -1 and e != -1 and e > s:
-            try:
-                json.loads(raw_text[s : e + 1])
-                return raw_text[s : e + 1]
-            except json.JSONDecodeError:
-                pass
-
-    # Strategy 4: return stripped as last resort (let caller raise a clear error)
-    return candidate
-
-
-def _repair_truncated_json(text: str) -> str:
-    """
-    Attempt to repair JSON that was cut off mid-stream (e.g. by max_tokens).
-    Strategy: strip everything after the last cleanly-closed value, then
-    close any unclosed braces/brackets in reverse order.
-    """
-    if not text:
-        return text
-
-    # Step 1: truncate at the last position that ends a clean value
-    # Walk backwards from the end to find the last } or ] or " or digit
-    t = text.rstrip()
-    # Remove any trailing comma, colon, or partial key
-    import re as _re
-    # Strip trailing incomplete tokens: comma, colon, partial string, whitespace
-    t = _re.sub(r'[,:\s]*$', '', t)
-    # If we ended mid-string (odd number of unescaped quotes), strip the open string
-    # Count quotes not preceded by backslash
-    in_string = False
-    escape_next = False
-    for ch in t:
-        if escape_next:
-            escape_next = False
-            continue
-        if ch == '\\':
-            escape_next = True
-            continue
-        if ch == '"':
-            in_string = not in_string
-    if in_string:
-        # Remove back to the last unescaped opening quote
-        last_quote = max(t.rfind('"'), 0)
-        t = t[:last_quote].rstrip().rstrip(',').rstrip()
-
-    # Step 2: close any open structures
-    stack = []
-    in_string = False
-    escape_next = False
-    for ch in t:
-        if escape_next:
-            escape_next = False
-            continue
-        if ch == '\\' and in_string:
-            escape_next = True
-            continue
-        if ch == '"':
-            in_string = not in_string
-            continue
-        if in_string:
-            continue
-        if ch in '{[':
-            stack.append('}' if ch == '{' else ']')
-        elif ch in '}]':
-            if stack:
-                stack.pop()
-
-    # Append the closing tokens in reverse
-    closing = ''.join(reversed(stack))
-    return t + closing
-
-
-def _parse_model_json(raw_text: str, source_name: str, required_kind: Optional[str] = None) -> Any:
-    """Parse JSON from an LLM response, tolerating preamble text and markdown fences."""
-    if not isinstance(raw_text, str):
-        raise HTTPException(status_code=502, detail=f"{source_name} returned non-text output before JSON parsing")
-
-    if not raw_text.strip() or raw_text.strip().lower() in {"none", "null"}:
-        raise HTTPException(status_code=502, detail=f"{source_name} returned empty output before JSON parsing")
-
-    want_array = required_kind == "array"
-    cleaned = _extract_json_from_text(raw_text, want_array=want_array)
-
-    try:
-        data = json.loads(cleaned)
-    except json.JSONDecodeError as exc:
-        # Attempt to repair truncated JSON by closing unclosed braces/brackets
-        repaired = _repair_truncated_json(cleaned)
-        try:
-            data = json.loads(repaired)
-            print(f"[JSON Repair] Recovered truncated JSON for {source_name}")
-        except json.JSONDecodeError:
-            raise HTTPException(
-                status_code=502,
-                detail=f"{source_name} returned invalid JSON: {exc}. Raw (first 300): {raw_text[:300]}"
-            ) from exc
-
-    if required_kind == "object" and not isinstance(data, dict):
-        raise HTTPException(status_code=502, detail=f"{source_name} returned invalid JSON schema: expected object")
-    if required_kind == "array" and not isinstance(data, list):
-        raise HTTPException(status_code=502, detail=f"{source_name} returned invalid JSON schema: expected array")
-
-    return data
 
 
 def _to_float(value: Any, default: float = 0.0) -> float:
@@ -407,128 +235,6 @@ def _render_pdf_pages_as_data_urls(file_bytes: bytes, max_pages: int = 5) -> Lis
         data_urls.append(_bytes_to_data_url(png_bytes, "image/png"))
 
     return data_urls
-
-
-def _vision_json(client: Any, image_data_url: str, prompt: str) -> Any:
-    """Call ZhipuAI glm-5.1 vision model via direct HTTP API.
-
-    The legacy SDK (v1.0.7) returns empty content for vision calls,
-    so we bypass it and call the HTTP API directly with JWT auth.
-    """
-    _ = client  # Kept for call-site compat; we now use direct HTTP
-
-    api_key = get_zhipu_api_key()
-
-    # ZhipuAI API key format: "{id}.{secret}" — split to build JWT
-    parts = api_key.split(".")
-    if len(parts) != 2:
-        raise HTTPException(status_code=500, detail="ZHIPUAI_API_KEY must be in 'id.secret' format")
-
-    api_id, api_secret = parts[0], parts[1]
-
-    # Build the JWT token (ZhipuAI's auth method)
-    import time as _time
-    try:
-        import jwt
-        now_ms = int(_time.time() * 1000)
-        payload_jwt = {
-            "api_key": api_id,
-            "exp": now_ms + 300_000,  # 5 min expiry
-            "timestamp": now_ms,
-        }
-        token = jwt.encode(payload_jwt, api_secret, algorithm="HS256", headers={"alg": "HS256", "sign_type": "SIGN"})
-    except Exception as jwt_err:
-        raise HTTPException(status_code=500, detail=f"Failed to sign ZhipuAI JWT: {jwt_err}")
-
-    # Call the vision model via direct HTTP with retry on 429 rate limits
-    import time as _time_mod
-    MAX_VISION_RETRIES = 3
-    last_exc = None
-
-    for attempt in range(1, MAX_VISION_RETRIES + 1):
-        try:
-            response = requests.post(
-                "https://open.bigmodel.cn/api/paas/v4/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {token}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": "glm-4.6v-flash",
-                    "temperature": 0.1,
-                    "max_tokens": 4000,
-                    "messages": [
-                        {"role": "system", "content": prompt},
-                        {
-                            "role": "user",
-                            "content": [
-                                {"type": "text", "text": "Read this document and return JSON only."},
-                                {"type": "image_url", "image_url": {"url": image_data_url}},
-                            ],
-                        },
-                    ],
-                },
-                timeout=90,
-            )
-
-            # Handle HTML error pages (e.g. gateway errors)
-            content_type = response.headers.get("content-type", "")
-            if "text/html" in content_type:
-                raise Exception(f"ZhipuAI returned HTML error (HTTP {response.status_code})")
-
-            # Handle 429 rate limit — wait and retry
-            if response.status_code == 429:
-                wait_s = 8 * attempt  # 8s, 16s, 24s
-                print(f"[Vision] ZhipuAI rate limited (429, attempt {attempt}/{MAX_VISION_RETRIES}). Waiting {wait_s}s...")
-                _time_mod.sleep(wait_s)
-                # Rebuild JWT since it's time-based
-                now_ms = int(_time_mod.time() * 1000)
-                payload_jwt["exp"] = now_ms + 300_000
-                payload_jwt["timestamp"] = now_ms
-                token = jwt.encode(payload_jwt, api_secret, algorithm="HS256", headers={"alg": "HS256", "sign_type": "SIGN"})
-                last_exc = Exception(f"ZhipuAI vision HTTP 429 (rate limited): {response.text[:200]}")
-                continue
-
-            if not response.ok:
-                raise Exception(f"ZhipuAI vision HTTP {response.status_code}: {response.text[:300]}")
-
-            data = response.json()
-
-            # Check for API-level error codes (e.g. 1305 = rate limit in body)
-            if "error" in data:
-                err_code = data["error"].get("code", "")
-                err_msg = data["error"].get("message", "")
-                if str(err_code) in ("1305", "1301", "1302"):
-                    wait_s = 10 * attempt
-                    print(f"[Vision] ZhipuAI error {err_code} (attempt {attempt}/{MAX_VISION_RETRIES}). Waiting {wait_s}s...")
-                    _time_mod.sleep(wait_s)
-                    last_exc = Exception(f"ZhipuAI vision error {err_code}: {err_msg}")
-                    continue
-                raise Exception(f"ZhipuAI vision API error {err_code}: {err_msg}")
-
-            choices = data.get("choices")
-            if not isinstance(choices, list) or not choices:
-                raise HTTPException(status_code=502, detail=f"Vision model returned no choices: {data}")
-
-            raw_text = _extract_model_text(choices[0].get("message", {}).get("content", ""))
-            return _parse_model_json(raw_text, source_name="Vision model")
-
-        except HTTPException:
-            raise
-        except Exception as exc:
-            last_exc = exc
-            if attempt < MAX_VISION_RETRIES:
-                _time_mod.sleep(5 * attempt)
-                continue
-            break
-
-    raise HTTPException(
-        status_code=502,
-        detail=f"ZhipuAI vision request failed after {MAX_VISION_RETRIES} attempts: {last_exc}",
-    )
-
-
-
 
 def _normalize_pl_rows(parsed: Any) -> List[Dict[str, Any]]:
     if isinstance(parsed, list):
@@ -963,173 +669,6 @@ def _replace_supplier_invoices(supabase: Client, summary_id: str, rows: List[Dic
     supabase.table("supplier_invoices").insert(payload).execute()
     return len(payload)
 
-
-def _call_text_llm(
-    client: Any, system_prompt: str, user_prompt: str, temperature: float = 0.2
-) -> str:
-    """Call ILMU glm-5.1 with auto-retry on 504/timeout errors."""
-    _ = client  # Kept for call-site compatibility; glm-5.1 now routes via ILMU.
-
-    ilmu_api_key = os.getenv("ILMU_API_KEY")
-    if not ilmu_api_key:
-        raise HTTPException(
-            status_code=500,
-            detail="Missing ILMU_API_KEY environment variable for glm-5.1",
-        )
-
-    # The only model available on this ILMU subscription is ilmu-glm-5.1
-    model_name = os.getenv("ILMU_MODEL", "ilmu-glm-5.1")
-
-    max_retries = 2
-    last_error = None
-
-    for attempt in range(max_retries + 1):
-        try:
-            request_body = {
-                "model": model_name,
-                "temperature": temperature,
-                "max_tokens": 3000,  # Enough for full JSON without truncation
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-            }
-
-            response = requests.post(
-                "https://api.ilmu.ai/v1/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {ilmu_api_key}",
-                    "Content-Type": "application/json",
-                },
-                json=request_body,
-                timeout=90,  # Under Cloudflare's ~100s gateway timeout
-            )
-
-            # Detect HTML error pages (504, 502 from Cloudflare)
-            content_type = response.headers.get("content-type", "")
-            if "text/html" in content_type or response.text.strip().startswith("<!DOCTYPE"):
-                raise requests.exceptions.ConnectionError(
-                    f"ILMU returned HTML error page (HTTP {response.status_code}) — server overloaded, retrying..."
-                )
-
-            # Check if the API returned an error code
-            if not response.ok:
-                error_details = response.text
-                try:
-                    error_details = response.json()
-                except ValueError:
-                    pass
-                raise Exception(f"HTTP {response.status_code}: {error_details}")
-
-            # SUCCESS — parse the response
-            payload = response.json() if response.content else {}
-            choices = payload.get("choices") if isinstance(payload, dict) else None
-            if not isinstance(choices, list) or not choices:
-                raise Exception(f"ILMU text response missing choices: {payload}")
-
-            first_choice = choices[0] if isinstance(choices[0], dict) else {}
-            message = first_choice.get("message") if isinstance(first_choice, dict) else {}
-            content = message.get("content") if isinstance(message, dict) else ""
-            text_output = _extract_model_text(content)
-
-            finish_reason = str(first_choice.get("finish_reason", "")).strip().lower() if isinstance(first_choice, dict) else ""
-            if finish_reason in {"content_filter", "sensitive", "blocked"}:
-                raise Exception(f"ILMU finish_reason={finish_reason}")
-
-            if not text_output and isinstance(message, dict):
-                text_output = _extract_model_text(message.get("reasoning_content"))
-
-            if not text_output and isinstance(first_choice, dict):
-                # Fallback for providers that sometimes return top-level text.
-                text_output = _extract_model_text(first_choice.get("text"))
-
-            if not text_output and isinstance(payload, dict):
-                text_output = _extract_model_text(payload.get("output_text"))
-
-            if not text_output:
-                # Debug: log raw payload to diagnose empty content
-                print(f"[ILMU Empty] finish_reason={finish_reason!r} | raw payload keys={list(payload.keys()) if isinstance(payload, dict) else type(payload)} | message={str(message)[:200]}")
-                raise Exception("ILMU returned empty content in choices[0]")
-
-            return text_output
-
-        except HTTPException:
-            raise  # Don't retry on our own validation errors
-        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
-            last_error = exc
-            if attempt < max_retries:
-                import time as _time
-                wait_secs = 3 * (attempt + 1)
-                print(f"[ILMU Retry {attempt+1}/{max_retries}] Timeout/connection error, waiting {wait_secs}s: {exc}")
-                _time.sleep(wait_secs)
-                continue
-        except Exception as exc:
-            last_error = exc
-            exc_str = str(exc).lower()
-            retryable = any(
-                kw in exc_str
-                for kw in [
-                    "504",
-                    "502",
-                    "timeout",
-                    "looping",
-                    "flagged",
-                    "empty content",
-                    "missing choices",
-                    "content_filter",
-                    "blocked",
-                ]
-            )
-            if attempt < max_retries and retryable:
-                import time as _time
-                wait_secs = 3 * (attempt + 1)
-                # Bump temperature on retry to break looping patterns
-                temperature = min(temperature + 0.2, 0.8)
-                print(f"[ILMU Retry {attempt+1}/{max_retries}] Error (will retry with temp={temperature}), waiting {wait_secs}s: {exc}")
-                _time.sleep(wait_secs)
-                continue
-            break
-
-    # All retries exhausted - FALLBACK TO ZHIPU via async invoke (legacy SDK compatible)
-    print(f"[ILMU Failed] Falling back to Zhipu natively due to: {last_error}")
-    try:
-        if isinstance(client, dict):
-            zhipu_client = client.get("client")
-        else:
-            zhipu_client = client
-
-        if not zhipu_client:
-            raise Exception("No Zhipu client available for fallback")
-
-        # Use async invoke which works with legacy SDK 1.0.7
-        combined_prompt = f"System: {system_prompt}\n\nUser: {user_prompt}"
-        response = zhipu_client.model_api.async_invoke(
-            model="glm-5.1",
-            prompt=[{"role": "user", "content": combined_prompt}],
-            temperature=min(temperature, 0.9)
-        )
-        task_id = response.get("data", {}).get("task_id", "")
-        if not task_id:
-            raise Exception(f"Zhipu async_invoke failed - no task_id: {response}")
-
-        # Poll for result
-        import time as _time
-        for _ in range(30):
-            _time.sleep(2)
-            result = zhipu_client.model_api.query_async_invoke_result(task_id)
-            task_status = result.get("data", {}).get("task_status", "")
-            if task_status == "SUCCESS":
-                choices = result.get("data", {}).get("choices", [])
-                raw_text = choices[0].get("content", "") if choices else ""
-                return _extract_model_text(raw_text)
-            elif task_status in ("FAILED", "EXPIRED"):
-                raise Exception(f"Zhipu async task {task_status}: {result}")
-        raise Exception("Zhipu async task timed out after 60 seconds")
-    except Exception as fallback_exc:
-        raise HTTPException(
-            status_code=502,
-            detail=f"ILMU failed and Zhipu fallback also failed: {fallback_exc} (Original ILMU error: {last_error})",
-        )
 def _get_previous_month(month_str: str) -> str:
     dt = datetime.strptime(f"{month_str}-01", "%Y-%m-%d")
     if dt.month == 1:
@@ -1966,19 +1505,29 @@ async def setup_profile(req: ProfileSetupRequest):
             "type": req.type,
             "pricing_tier": req.pricing_tier,
             "operating_hours": req.operating_hours,
-            "target_audience": req.target_audience, # JSONB handles dicts automatically
+            "target_audience": req.target_audience, 
             "address": req.address,
             "latitude": req.latitude,
             "longitude": req.longitude
         }
         
-        # Use owner_id to update the specific merchant record
-        supabase.table("merchants").update(update_data).eq("owner_id", req.merchant_id).execute()
+        # Check if the merchant row exists first
+        existing_merchant = supabase.table("merchants").select("shop_id").eq("owner_id", req.merchant_id).execute()
         
-        return {"status": "success", "message": "Profile fully initialized!"}
+        if not existing_merchant.data:
+            # If it doesn't exist, we INSERT it instead of updating
+            update_data["owner_id"] = req.merchant_id
+            supabase.table("merchants").insert(update_data).execute()
+        else:
+            # If it exists, proceed with the UPDATE
+            supabase.table("merchants").update(update_data).eq("owner_id", req.merchant_id).execute()
+
+        # THE FIX: You must return a success response for your React frontend!
+        return {"status": "success", "message": "Profile saved successfully."}
+
     except Exception as e:
         return {"status": "error", "message": str(e)}
-
+    
 @app.post("/analyze-financial-document")
 def analyze_financial_document(payload: AnalyzeFinancialDocumentRequest) -> Dict[str, Any]:
     mime, raw_bytes = _decode_data_url(payload.file_data_url)
@@ -2002,7 +1551,7 @@ def analyze_financial_document(payload: AnalyzeFinancialDocumentRequest) -> Dict
     for page_index, page_data_url in enumerate(pages, start=1):
         # Single-pass extraction per page with a strict master schema.
         try:
-            parsed = _vision_json(client, page_data_url, MASTER_EXTRACT_PROMPT)
+            parsed = run_sync_router(page_data_url, MASTER_EXTRACT_PROMPT)
             parsed_obj = _coerce_master_payload(parsed)
 
             page_type = str(parsed_obj.get("document_type", "")).strip().lower()
@@ -2125,7 +1674,7 @@ def boardroom_detective_cards(payload: DetectiveCardsRequest) -> Dict[str, Any]:
         llm_client = get_zhipu_client()
         
         # 5. We use temperature 0.1 for high determinism since it's formatting JSON
-        raw_output = _call_text_llm(llm_client, sys_prompt, usr_prompt, temperature=0.1)
+        raw_output = call_llm(sys_prompt, usr_prompt, temperature=0.1)
         parsed_cards = _parse_model_json(raw_output, source_name="Detective Cards", required_kind="object")
         
         # Ensure default structure if AI missed something
@@ -2174,7 +1723,7 @@ def boardroom_start(payload: BoardroomStartRequest) -> Dict[str, Any]:
         diagnostic_json = financial_context.get("diagnostic_patterns", {})
 
         sys_prompt, usr_prompt = _analyst_interrogation_prompt(financial_context)
-        raw_questions = _call_text_llm(llm_client, sys_prompt, usr_prompt, temperature=0.1)
+        raw_questions = call_llm(sys_prompt, usr_prompt, temperature=0.1)
         parsed_questions = _parse_model_json(raw_questions, "Analyst Questions", required_kind="array")
 
         return {
@@ -2282,7 +1831,7 @@ def boardroom_continue(payload: BoardroomContinueRequest) -> Dict[str, Any]:
             boss_answers=boss_answers,
             external_signals=external_signals,
         )
-        theory_v1 = _call_text_llm(llm_client, analyst_sys, analyst_usr, temperature=0.2)
+        theory_v1 = call_llm(analyst_sys, analyst_usr, temperature=0.2)
 
         sup_sys, sup_usr = _supervisor_review_prompt(
             diagnostic_json=diagnostic_json,
@@ -2290,7 +1839,7 @@ def boardroom_continue(payload: BoardroomContinueRequest) -> Dict[str, Any]:
             theory_v1=theory_v1,
             external_signals=external_signals,
         )
-        supervisor_evaluation = _call_text_llm(llm_client, sup_sys, sup_usr, temperature=0.1)
+        supervisor_evaluation = call_llm(sup_sys, sup_usr, temperature=0.1)
 
         supervisor_decision = _extract_supervisor_decision(supervisor_evaluation)
         final_approved_theory = theory_v1 if supervisor_decision == "APPROVED" else ""
@@ -2304,7 +1853,7 @@ def boardroom_continue(payload: BoardroomContinueRequest) -> Dict[str, Any]:
                 final_approved_theory=final_approved_theory,
                 external_signals=external_signals,
             )
-            strategist_action_plan = _call_text_llm(llm_client, strategist_sys, strategist_usr, temperature=0.2)
+            strategist_action_plan = call_llm(strategist_sys, strategist_usr, temperature=0.2)
 
             supabase.table("monthly_summaries").update({
                 "boss_context": boss_answers,
@@ -2388,7 +1937,7 @@ def boardroom_synthesis(payload: SynthesisRequest) -> Dict[str, Any]:
             "Return the JSON."
         )
 
-        raw_json = _call_text_llm(llm_client, ceo_sys, ceo_usr, temperature=0.2)
+        raw_json = call_llm(ceo_sys, ceo_usr, temperature=0.2)
         synthesis_data = _parse_model_json(raw_json, source_name="CEO Synthesis", required_kind="object")
 
         return {
@@ -2439,7 +1988,7 @@ def boardroom_debate(payload: BoardroomDebateRequest) -> Dict[str, Any]:
             "Return the JSON array."
         )
         
-        raw_json = _call_text_llm(llm_client, strategy_sys, strategy_usr, temperature=0.3)
+        raw_json = call_llm(strategy_sys, strategy_usr, temperature=0.2)
         strategies = _parse_model_json(raw_json, source_name="Debate Opinions", required_kind="array")
 
         return {
@@ -2507,7 +2056,7 @@ def simulate_what_if(payload: WhatIfSimulationRequest) -> Dict[str, Any]:
             f"Run the simulation. Generate the financial comparison and exactly {agent_count} agents. Return pure JSON."
         )
 
-        raw_json_response = _call_text_llm(llm_client, simulation_sys, simulation_usr, temperature=0.5)
+        raw_json_response = call_llm(simulation_sys, simulation_usr, temperature=0.5)
 
         # 4. Clean and Parse the JSON safely
         simulation_data = _parse_model_json(
@@ -2678,7 +2227,7 @@ def generate_roadmap(payload: GenerateRoadmapRequest) -> Dict[str, Any]:
         )
 
         # Temperature 0.4 gives it enough creativity to apply the weather/traffic to the tasks logically
-        raw_json_response = _call_text_llm(llm_client, roadmap_sys, roadmap_usr, temperature=0.4)
+        raw_json_response = call_llm(roadmap_sys, roadmap_usr, temperature=0.4)
 
         roadmap_data = _parse_model_json(
             raw_json_response,
@@ -2794,7 +2343,7 @@ def upload_statement_pdf(payload: SingleUploadRequest):
     total_revenue = 0.0 
 
     for page in pages:
-        parsed = _vision_json(client, page, MASTER_EXTRACT_PROMPT)
+        parsed = run_sync_router(page, MASTER_EXTRACT_PROMPT)
         parsed_obj = _coerce_master_payload(parsed)
         
         # 🚀 Now we safely grab it from the cleaned object!
@@ -2842,7 +2391,7 @@ def upload_invoices_pdf(payload: SingleUploadRequest):
     supplier_invoices = []
 
     for page in pages:
-        parsed = _vision_json(client, page, MASTER_EXTRACT_PROMPT)
+        parsed = run_sync_router(page, MASTER_EXTRACT_PROMPT)
         parsed_obj = _coerce_master_payload(parsed)
         supplier_invoices.extend(_normalize_invoice_rows(parsed_obj.get("supplier_invoices", [])))
 
@@ -3198,7 +2747,7 @@ def run_swarm_simulation(payload: SwarmSimulationRequest):
         engine = "ilmu"
         fallback_reason = ""
         try:
-            raw_json_response = _call_text_llm(None, system_prompt, user_prompt, temperature=0.4)
+            raw_json_response = call_llm(system_prompt, user_prompt, temperature=0.4)
             simulation_data = _parse_model_json(raw_json_response, source_name="Simulation model", required_kind="object")
         except HTTPException as llm_exc:
             engine = "local_fallback"
@@ -3224,7 +2773,8 @@ def run_swarm_simulation(payload: SwarmSimulationRequest):
 
         # Map LLM results by cohort name for easy lookup
         cohort_results = {
-            str(c.get("cohort", "")): c for c in swarm_behavior if isinstance(c, dict)
+            str(c.get("cohort", "")).lower().strip(): c 
+            for c in swarm_behavior if isinstance(c, dict)
         }
 
         synthetic_agents = []
@@ -3235,9 +2785,9 @@ def run_swarm_simulation(payload: SwarmSimulationRequest):
             segment = cohort["segment"]
             count = cohort["headcount"]
 
-            llm_eval = cohort_results.get(cohort_name, {})
+            llm_eval = cohort_results.get(cohort_name.lower().strip(), {})
             
-            base_decision = str(llm_eval.get("decision", "buy")).strip().lower()
+            base_decision = str(llm_eval.get("decision", "pass")).strip().lower()
             if base_decision not in ["buy", "pass"]:
                 base_decision = "pass"
                 
@@ -3289,41 +2839,59 @@ def run_swarm_simulation(payload: SwarmSimulationRequest):
         else:
             profit_margin = 0.40 # Fallback if they haven't uploaded invoices yet
 
-        # Calculate exact Ringgit impact
-        baseline_buyers = int(len(synthetic_agents) * base_conversion_rate)
-        baseline_profit = (baseline_buyers * base_aov * profit_margin)
+ # ── Profit Math ────────────────────────────────────────────
+        real_monthly_profit  = float(slim_fin.get("profit", 0.0))
+        real_monthly_revenue = float(slim_fin.get("rev",    0.0))
+        real_cogs            = float(slim_fin.get("cogs",   0.0))
 
-        projected_gross_profit = (total_buy * new_aov * profit_margin)
-        projected_net_profit = projected_gross_profit - upfront_cost
+        # Dynamic profit margin from real data (capped 10-80%)
+        if real_monthly_revenue > 0 and real_cogs > 0:
+            profit_margin = max(0.10, min((real_monthly_revenue - real_cogs) / real_monthly_revenue, 0.80))
+        else:
+            profit_margin = 0.40  # Sensible café default
 
-        true_profit_boost = projected_net_profit - baseline_profit
-        
-        # Override the LLM's guesses with our hard math
+        total_agents   = max(len(synthetic_agents), 1)
+        buy_rate       = total_buy / total_agents
+        baseline_buyers = int(total_agents * 0.30)  # 30% baseline conversion
+
+        # Baseline: use real profit if available, else estimate from agents
+        if real_monthly_profit != 0:
+            baseline_profit = real_monthly_profit
+        else:
+            baseline_profit = round(baseline_buyers * base_aov * profit_margin, 2)
+
+        # Projected: scale from baseline using buy rate delta vs 30% baseline
+        buy_rate_delta      = buy_rate - 0.30          # e.g. 0.75 - 0.30 = +0.45
+        projected_net_profit = round(baseline_profit * (1 + buy_rate_delta * 1.5), 2)
+        true_profit_boost    = round(projected_net_profit - baseline_profit, 2)
+        llm_verdict = str(financials.get("final_verdict", "")).strip().upper()
+
+        if llm_verdict == "AVOID" and true_profit_boost > 0:
+            true_profit_boost = round(true_profit_boost * -1, 2)  # Flip to negative
+            projected_net_profit = round(baseline_profit + true_profit_boost, 2)
+
         financials["baseline_estimated_profit"] = baseline_profit
         financials["projected_new_profit"] = projected_net_profit
         financials["profit_boost"] = true_profit_boost
-        
-        # Hard fail the verdict if it loses money
-        if true_profit_boost < 0:
-            financials["final_verdict"] = "AVOID"
+        simulation_data["financial_analysis"]   = financials
 
-        simulation_data["financial_analysis"] = financials
-
+        # ── Response ───────────────────────────────────────────────
         response_payload = {
-            "status": "success",
-            "engine": engine,
-            "scenario": payload.scenario_prompt,
-            "summary": simulation_data.get("simulation_summary", ""),
-            "financials": simulation_data.get("financial_analysis", {}),
+            "status":    "success",
+            "engine":    engine,
+            "scenario":  payload.scenario_prompt,
+            "summary":   simulation_data.get("simulation_summary", ""),
+            "financials": financials,
             "operations": simulation_data.get("operational_impact", {}),
-            "swarm_behavior": swarm_behavior,
+            "swarm_behavior":   swarm_behavior,
             "signal_references": simulation_data.get("signal_references", []),
             "stats": {
                 "total_agents": len(synthetic_agents),
-                "total_buy": total_buy,
-                "total_pass": total_pass
+                "total_buy":    total_buy,
+                "total_pass":   total_pass,
+                "buy_rate_pct": round(buy_rate * 100, 1),
             },
-            "swarm_data": synthetic_agents
+            "swarm_data": synthetic_agents,
         }
 
         if fallback_reason:
@@ -3336,7 +2904,7 @@ def run_swarm_simulation(payload: SwarmSimulationRequest):
     except Exception as e:
         print(f"Swarm Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
+    
 class BossContextRequest(BaseModel):
     merchant_id: str
     target_month: Optional[str] = None 

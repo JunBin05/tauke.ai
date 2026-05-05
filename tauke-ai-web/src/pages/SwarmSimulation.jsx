@@ -140,16 +140,6 @@ const LandingPage = ({ onStart, value, onChange }) => {
                 onChange={(e) => onChange(e.target.value)}
                 disabled={isTyping}
               />
-
-              <motion.button
-                whileHover={isActive && !isTyping ? { opacity: 0.9 } : {}}
-                whileTap={isActive && !isTyping ? { scale: 0.9 } : {}}
-                onClick={isActive && !isTyping ? onStart : undefined}
-                disabled={!isActive || isTyping}
-                className={`btn-arrow ${(isActive && !isTyping) ? 'active' : 'disabled'}`}
-              >
-                <ArrowUp size={20} />
-              </motion.button>
             </div>
 
             {/* Subtle Action Row (Replaces the old tags container) */}
@@ -402,11 +392,6 @@ const SimulationPage = ({ isRunning, errorMessage, onRetry, onBack, runId }) => 
               text: `Active Agents: ${activeAgents}`, // 👈 Now completely dynamic
               color: "blue"
             },
-            {
-              icon: <Brain size={16} />,
-              text: "Powered by: GLM-5.1", // 👈 Updated Model Name
-              color: "blue"
-            }
           ].map((chip, i) => (
             <div key={i} className="sim-chip">
               <div className={`chip-icon text-${chip.color}`}>{chip.icon}</div>
@@ -496,7 +481,8 @@ const ResultsPage = ({ scenario, simulationResult, onRunAnother }) => {
   const totalAgents = Number(stats.total_agents) || 0;
   const totalBuy = Number(stats.total_buy) || 0;
   const totalPass = Number(stats.total_pass) || 0;
-  const buyRatePercent = totalAgents > 0 ? Math.round((totalBuy / totalAgents) * 100) : 0;
+  const buyRatePercent = Number(stats.buy_rate_pct)         
+  || (totalAgents > 0 ? Math.round((totalBuy / totalAgents) * 100) : 0);
   const rawVerdict = String(financials.final_verdict || '').trim().toUpperCase();
   const verdict = (rawVerdict === 'ABORT' || rawVerdict === 'AVOID') ? 'ABORT' : 'PROCEED';
   const isAbortVerdict = verdict === 'ABORT';
@@ -522,12 +508,12 @@ const ResultsPage = ({ scenario, simulationResult, onRunAnother }) => {
 
   // Only show segments that have real data — skip empty LLM segments
   const reasoningCards = swarmBehavior
-    .filter(item => item && (item.segment || item.reaction))
+    .filter(item => item && (item.cohort || item.segment || item.reaction))
     .slice(0, 3)
     .map((item, index) => ({
       num: String(index + 1).padStart(2, '0'),
-      title: item.segment || `Segment ${index + 1}`,
-      desc: item.reaction || item.churn_risk || 'Segment responded to the scenario.'
+      title: item.cohort || item.segment || `Segment ${index + 1}`,
+      desc: item.reaction || item.churn_risk || 'No reasoning returned.'
     }));
 
   // Don't pad with fake segments — if the LLM returned fewer, show fewer
@@ -745,15 +731,20 @@ const ResultsPage = ({ scenario, simulationResult, onRunAnother }) => {
                         key={idx}
                         initial={{ opacity: 0, x: 20 }}
                         animate={{ opacity: 1, x: 0 }}
-                        transition={{ delay: idx * 0.1 }}
+                        transition={{ delay: idx * 0.05 }}
                         style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', marginBottom: '8px', backgroundColor: '#f8fafc', borderRadius: '8px' }}
                       >
                         <div>
                           <div style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--slate-900)' }}>
-                            {agent.segment || `Agent #${idx + 1}`}
+                            {agent.role || agent.segment || `Agent #${idx + 1}`}
                           </div>
-                          <div style={{ fontSize: '0.75rem', color: 'var(--slate-500)', marginTop: '2px', lineHeight: 1.4 }}>
-                            {agent.persona || agent.reaction || 'Simulated profile'}
+                          {agent.trait && (
+                            <div style={{ fontSize: '0.72rem', color: 'var(--slate-400)', marginTop: '1px' }}>
+                              {agent.trait}
+                            </div>
+                          )}
+                          <div style={{ fontSize: '0.75rem', color: 'var(--slate-500)', marginTop: '3px', lineHeight: 1.4 }}>
+                            {agent.reason || agent.reaction || 'No reason provided'}
                           </div>
                         </div>
                         <div style={{
@@ -761,10 +752,12 @@ const ResultsPage = ({ scenario, simulationResult, onRunAnother }) => {
                           borderRadius: '20px',
                           fontSize: '0.75rem',
                           fontWeight: 800,
+                          flexShrink: 0,
+                          marginLeft: '12px',
                           backgroundColor: isBuy ? 'var(--green-50)' : 'var(--red-50)',
                           color: isBuy ? 'var(--green-600)' : 'var(--red-600)'
                         }}>
-                          {isBuy ? 'BUY' : 'PASS'}
+                          {isBuy ? 'BUY' : 'PASS'}          
                         </div>
                       </motion.div>
                     );
@@ -775,35 +768,6 @@ const ResultsPage = ({ scenario, simulationResult, onRunAnother }) => {
                   </p>
                 )}
               </div>
-            </div>
-
-            <div className="cta-card">
-              <div className="cta-glow"></div>
-              <h4 className="cta-title">
-                {isAbortVerdict ? 'Your core intent is valid. Let us tune the strategy.' : 'Turn this into an action plan?'}
-              </h4>
-              <p className="cta-desc">
-                {isAbortVerdict
-                  ? 'No stress. We can generate a more suitable roadmap that keeps your original direction but reduces risk and improves execution fit.'
-                  : 'Let the AI generate a step-by-step execution roadmap based on this simulation.'}
-              </p>
-              <button
-                className="btn-cta"
-                onClick={generateRoadmap}
-                disabled={roadmapLoading}
-              >
-                {roadmapLoading ? `⏳ ${roadmapButtonLoadingLabel}` : `📋 ${roadmapButtonLabel}`}
-              </button>
-              {roadmapError && (
-                <p style={{ color: '#fda4af', fontSize: '0.8rem', marginTop: '8px' }}>{roadmapError}</p>
-              )}
-              <button
-                className="btn-cta"
-                style={{ marginTop: '8px', background: 'transparent', border: '1px solid rgba(255,255,255,0.2)', color: 'rgba(255,255,255,0.7)' }}
-                onClick={onRunAnother}
-              >
-                Run New Simulation
-              </button>
             </div>
           </div>
         </div>

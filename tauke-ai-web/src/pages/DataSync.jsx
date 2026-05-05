@@ -72,7 +72,16 @@ export default function DataSync() {
           // 👇 UPDATE THIS FOREACH TO USE THE INDEX
           results.forEach((res, index) => {
             if (res.status === "success") {
-              newState[months[index]] = res.sync_state; // Map it back to "April 2026"
+              const m = months[index];
+              // 👇 Fetch saved filenames from browser storage
+              const savedSales = localStorage.getItem(`sync_file_${ownerId}_${m}_sales`) || "historical_sales.csv";
+              const savedProc = localStorage.getItem(`sync_file_${ownerId}_${m}_procurement`) || "statement.pdf";
+              const savedInv = localStorage.getItem(`sync_file_${ownerId}_${m}_invoices`) || "invoices.pdf";
+              newState[m] = {
+                sales: { ...res.sync_state.sales, fileName: savedSales },
+                procurement: { ...res.sync_state.procurement, fileName: savedProc },
+                invoices: { ...res.sync_state.invoices, fileName: savedInv }
+              };
             }
           });
           return newState;
@@ -130,6 +139,7 @@ export default function DataSync() {
       const data = await response.json();
 
       if (data.status === "success") {
+        localStorage.setItem(`sync_file_${ownerId}_${selectedMonth}_${type}`, file.name);
         setAllMonthsSyncStates(prev => ({
           ...prev,
           [selectedMonth]: { ...prev[selectedMonth], [type]: { isSynced: true, isUploading: false, fileName: file.name } }

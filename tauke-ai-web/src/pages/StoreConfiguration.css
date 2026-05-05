@@ -231,13 +231,48 @@ select.sc-input:focus {
 .sc-row { display: flex; gap: 24px; }
 .sc-row > div { flex: 1; }
 
-/* Audience Sliders */
-.sc-audience-row {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  margin-bottom: 16px;
+/* --- Audience Typeable Number Input (Upgraded) --- */
+.sc-audience-number {
+  width: 46px; /* Slightly wider to fit "100" comfortably */
+  padding: 4px 0;
+  font-weight: 800;
+  font-size: 16px;
+  font-family: 'Inter', sans-serif;
+  
+  /* Make it stand out subtly */
+  color: #0058bc; 
+  text-align: center;
+  background: rgba(0, 88, 188, 0.08); 
+  
+  /* Remove the ugly default border and round the corners */
+  border: 1px solid transparent;
+  border-radius: 8px; 
+  outline: none;
+  transition: all 0.2s ease;
+  
+  -moz-appearance: textfield; /* Hides arrows in Firefox */
 }
+
+/* Subtle hover effect */
+.sc-audience-number:hover {
+  background: rgba(0, 88, 188, 0.15);
+}
+
+/* When the user clicks to type, it glows like a real form field */
+.sc-audience-number:focus {
+  background: #ffffff;
+  border-color: #0058bc;
+  box-shadow: 0 0 0 3px rgba(0, 88, 188, 0.15);
+  color: #1a1c1d;
+}
+
+/* Hides the default up/down arrows in Chrome/Safari/Edge */
+.sc-audience-number::-webkit-outer-spin-button,
+.sc-audience-number::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
 .sc-range {
   width: 100%; /* 👈 THIS IS THE FIX: Forces it to extend all the way right */
   height: 8px;
@@ -297,4 +332,67 @@ select.sc-input:focus {
   .sc-sidebar { display: none; }
   .sc-main { margin: 0 auto; padding: 24px; }
   .sc-grid { grid-template-columns: 1fr; }
+}
+
+/* --- Premium Location Search Bar --- */
+.sc-location-search-container {
+  margin-bottom: 12px;
+  width: 100%;
+}
+
+.sc-search-input-wrapper {
+  display: flex;
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 6px 6px 6px 16px;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+  transition: all 0.2s ease;
+}
+
+/* Beautiful glow effect when the user clicks the search bar */
+.sc-search-input-wrapper:focus-within {
+  border-color: #0058bc;
+  box-shadow: 0 0 0 3px rgba(0, 88, 188, 0.15);
+}
+
+.sc-search-icon-left {
+  color: #94a3b8;
+  margin-right: 12px;
+  flex-shrink: 0;
+}
+
+.sc-location-input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  font-size: 15px;
+  color: #1a1c1d;
+  outline: none;
+  padding: 8px 0;
+  font-family: 'Inter', sans-serif;
+}
+
+/* Fixes the native autocomplete background color in Chrome */
+.sc-location-input:-webkit-autofill {
+  -webkit-box-shadow: 0 0 0px 1000px white inset;
+}
+
+.sc-search-btn-right {
+  background: #f1f5f9;
+  color: #0058bc;
+  border: none;
+  padding: 10px 20px;
+  border-radius: 8px;
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+}
+
+.sc-search-btn-right:hover {
+  background: #e2e8f0;
+  color: #00428f;
 }

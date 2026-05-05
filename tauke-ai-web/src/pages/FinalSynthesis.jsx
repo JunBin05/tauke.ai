@@ -3,7 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
+import html2canvas from 'html2canvas';
+import { jsPDF } from 'jspdf';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { API_BASE_URL } from '../config';
@@ -19,7 +21,7 @@ import {
 import './FinalSynthesis.css';
 import './LoadingPage.css'; // Added for the loading state!
 
-const Modal = ({ isOpen, onClose, onConfirm, title, children }) => {
+const Modal = ({ isOpen, onClose, onConfirm, title, children, confirmText = 'Acknowledge & Continue' }) => {
   return (
     <AnimatePresence>
       {isOpen && (
@@ -44,7 +46,7 @@ const Modal = ({ isOpen, onClose, onConfirm, title, children }) => {
               </div>
               <div className="modal-footer">
                 <button onClick={onConfirm} className="btn-modal">
-                  Acknowledge & Continue
+                  {confirmText}
                 </button>
               </div>
             </div>
@@ -116,8 +118,11 @@ export default function App() {
     isOpen: false,
     title: '',
     content: null,
-    onConfirmAction: null
+    onConfirmAction: null,
+    confirmText: 'Acknowledge & Continue'
   });
+
+  const reportRef = useRef(null);
 
   useEffect(() => {
     const fetchSynthesis = async () => {
@@ -125,7 +130,8 @@ export default function App() {
       const targetMonth = localStorage.getItem("target_month");
       const bossAnswers = localStorage.getItem("boss_answers") || "";
       const debateStrategies = JSON.parse(localStorage.getItem("boardroom_debate_strategies") || "[]");
-
+      
+      
       if (!ownerId) {
         setIsLoading(false);
         return;
@@ -165,12 +171,53 @@ export default function App() {
     fetchSynthesis();
   }, []);
 
-  const openModal = (title, content, customConfirmAction = null) => {
-    setModalState({ isOpen: true, title, content, onConfirmAction: customConfirmAction });
+  const openModal = (title, content, customConfirmAction = null, confirmText = 'Acknowledge & Continue') => {
+    setModalState({ isOpen: true, title, content, onConfirmAction: customConfirmAction, confirmText });
   };
 
   const closeModal = () => {
     setModalState(prev => ({ ...prev, isOpen: false }));
+  };
+
+  const handleDownloadPDF = async () => {
+    // 1. Grab the HTML element we want to convert
+    const element = reportRef.current;
+    if (!element) {
+      alert("Report table is not ready yet!");
+      return;
+    }
+
+    try {
+      // 2. Take a high-quality hidden screenshot of the table
+      const canvas = await html2canvas(element, { 
+        scale: 2, // Makes the text sharp
+        useCORS: true,
+        backgroundColor: '#ffffff' 
+      });
+      
+      const imgData = canvas.toDataURL('image/png');
+
+      // 3. Create a new PDF document
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      
+      // Calculate height to maintain the correct aspect ratio
+      const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+
+      // 4. Paste the image into the PDF and save it!
+      pdf.addImage(imgData, 'PNG', 0, 10, pdfWidth, pdfHeight);
+      
+      const targetMonth = localStorage.getItem("target_month") || "Report";
+      pdf.save(`Tauke_Strategy_${targetMonth}.pdf`);
+
+      // 5. Close the modal when done
+      closeModal();
+      
+    } catch (error) {
+      console.error("Failed to generate PDF:", error);
+      alert("Error generating PDF.");
+      closeModal();
+    }
   };
 
   const handleConfirmAction = async (strategy) => {
@@ -302,6 +349,7 @@ export default function App() {
 
         {analysis && (
           <motion.div
+            ref={reportRef}
             initial={{ opacity: 0, y: 30 }}
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true }}
@@ -311,13 +359,7 @@ export default function App() {
               <h3 className="analysis-title">Comparative Analysis</h3>
               <div className="tool-buttons">
                 <button
-                  onClick={() => openModal('Filters', 'Advanced filtering options for comparative metrics will appear here.')}
-                  className="btn-tool"
-                >
-                  <Filter size={20} />
-                </button>
-                <button
-                  onClick={() => openModal('Download Report', 'Preparing your strategic PDF export... Total size: 4.2MB')}
+                  onClick={() => openModal('Download Report', 'Preparing your strategic PDF export... Total size: 4.2MB', handleDownloadPDF, 'Download as PDF')}
                   className="btn-tool"
                 >
                   <Download size={20} />
@@ -337,7 +379,7 @@ export default function App() {
                 </thead>
                 <tbody>
                   <tr>
-                    <td className="row-label">Core Pros</td>
+                    <td className="row-label">Core Benefits</td>
                     <td className="cell-content" style={{ textAlign: 'center' }}>{analysis.corePros.aggressive}</td>
                     <td className="cell-content cell-active" style={{ textAlign: 'center' }}>{analysis.corePros.hybrid}</td>
                     <td className="cell-content" style={{ textAlign: 'center' }}>{analysis.corePros.defensive}</td>
@@ -349,12 +391,12 @@ export default function App() {
                     <td className="cell-content" style={{ textAlign: 'center' }}>{analysis.riskFactors.defensive}</td>
                   </tr>
                   <tr>
-                    <td className="row-label">Resource Drain</td>
+                    <td className="row-label">Resource Loss</td>
                     <td>
                       <div className="progress-track">
                         <motion.div
                           initial={{ width: 0 }}
-                          whileInView={{ width: `${analysis.resourceDrain.aggressive}%` }}
+                          whileInView={{ width: `${parseInt(analysis.resourceDrain.aggressive) || 0}%` }}
                           transition={{ duration: 1, delay: 0.2 }}
                           className="progress-fill"
                           style={{ backgroundColor: '#ef4444' }}
@@ -365,7 +407,7 @@ export default function App() {
                       <div className="progress-track">
                         <motion.div
                           initial={{ width: 0 }}
-                          whileInView={{ width: `${analysis.resourceDrain.hybrid}%` }}
+                          whileInView={{ width: `${parseInt(analysis.resourceDrain.aggressive) || 0}%` }}
                           transition={{ duration: 1, delay: 0.4 }}
                           className="progress-fill"
                           style={{ backgroundColor: '#0058bc' }}
@@ -376,7 +418,7 @@ export default function App() {
                       <div className="progress-track">
                         <motion.div
                           initial={{ width: 0 }}
-                          whileInView={{ width: `${analysis.resourceDrain.defensive}%` }}
+                          whileInView={{ width: `${parseInt(analysis.resourceDrain.aggressive) || 0}%` }}
                           transition={{ duration: 1, delay: 0.6 }}
                           className="progress-fill"
                           style={{ backgroundColor: '#cbd5e1' }}
@@ -427,6 +469,7 @@ export default function App() {
         onClose={closeModal}
         onConfirm={modalState.onConfirmAction ? modalState.onConfirmAction : closeModal}
         title={modalState.title}
+        confirmText={modalState.confirmText} 
       >
         {modalState.content}
       </Modal>
